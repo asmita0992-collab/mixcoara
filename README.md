@@ -51,3 +51,4 @@ Android Studio.
 4. **Pestaña Bitácora**:
    - Visor de terminal en tiempo real de las últimas líneas de `mixcoara.log`.
    - Copia al portapapeles, exportación a archivo y limpieza rotativa.
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/asmita0992-collab/mixcoara?utm_source=oss&utm_medium=github&utm_campaign=asmita0992-collab%2Fmixcoara&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
