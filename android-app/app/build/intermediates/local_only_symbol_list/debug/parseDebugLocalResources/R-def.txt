@@ -1,0 +1,7 @@
+R_DEF: Internal format may change without notice
+local
+drawable mixcoara_icon
+drawable mixcoara_logo
+string app_name
+style Theme.Mixcoara
+xml backup_rules
