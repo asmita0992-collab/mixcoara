@@ -1,1 +1,0 @@
-/home/vercel-sandbox/.local/share/mise/installs/python/3.13/bin/python
