@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.mixcoara.app.ui.theme.MixcoaraThemeId
 import org.json.JSONObject
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -14,6 +15,13 @@ import javax.crypto.spec.GCMParameterSpec
 class SecureConfigStore(context: Context) {
     private val preferences =
         context.getSharedPreferences("mixcoara_secure_config", Context.MODE_PRIVATE)
+
+    fun saveTheme(themeId: MixcoaraThemeId) {
+        preferences.edit().putString("theme_id", themeId.id).apply()
+    }
+
+    fun loadTheme(): MixcoaraThemeId =
+        MixcoaraThemeId.fromId(preferences.getString("theme_id", MixcoaraThemeId.APP.id))
 
     fun saveBiometricPassphrase(passphrase: String) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -117,3 +125,4 @@ class SecureConfigStore(context: Context) {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
 }
+

@@ -14,6 +14,7 @@ Boveda/
     └── <uuid_archivo>/     dir.c9r + <uuid_archivo>.bin (AES-256-GCM, bloques de 64 KB)
 """
 
+import io
 import os
 import sys
 import json
@@ -120,7 +121,12 @@ def _get_error_cripto() -> str:
 
 
 def _set_error_cripto(val: str):
+    global ULTIMO_ERROR_CRIPTO
     _tl.cripto = val
+    ULTIMO_ERROR_CRIPTO = val
+
+
+ULTIMO_ERROR_CRIPTO = ""
 
 
 def directorio_mixcoara() -> Path:
@@ -131,6 +137,7 @@ def directorio_mixcoara() -> Path:
     destino = base / "Mixcoara"
     destino.mkdir(parents=True, exist_ok=True)
     return destino
+
 
 def directorio_temporal() -> Path:
     destino = directorio_mixcoara() / ".temporales"
@@ -193,11 +200,15 @@ def fmt_tiempo(seg: float) -> str:
 
 
 class Progreso:
-    """Lleva los contadores de una fase. 'al_cambiar' recibe este objeto cada ~0.1 s."""
+    """Lleva los contadores de una fase y separa el tiempo de preparación/cifrado del tiempo de subida."""
 
     def __init__(self, al_cambiar: Optional[Callable[["Progreso"], None]] = None):
         self.al_cambiar = al_cambiar
         self._ult = 0.0
+        self._tiempo_lock = threading.Lock()
+        self.segundos_preparacion = 0.0
+        self.t_inicio_subida: Optional[float] = None
+        self.segundos_validacion = 0.0
         self.iniciar("")
 
     def iniciar(self, fase: str, archivos: int = 0, carpetas: int = 0, bytes_: int = 0):
@@ -207,14 +218,34 @@ class Progreso:
         self.bytes_total, self.bytes_hechos = bytes_, 0
         self.estado, self.actual = "", ""
         self.t0 = time.monotonic()
+        self.t_inicio_subida = None
         self._muestras = [(self.t0, 0)]
         self.refrescar(True)
+
+    def sumar_preparacion(self, seg: float):
+        if seg > 0:
+            with self._tiempo_lock:
+                self.segundos_preparacion += seg
+        self.refrescar()
+
+    def marcar_inicio_subida(self):
+        with self._tiempo_lock:
+            if self.t_inicio_subida is None:
+                self.t_inicio_subida = time.monotonic()
+
+    def transcurrido_subida(self) -> float:
+        with self._tiempo_lock:
+            if self.t_inicio_subida is None:
+                return 0.0
+            return max(0.0, time.monotonic() - self.t_inicio_subida - self.segundos_validacion)
 
     def poner(self, estado: str, actual: str = ""):
         self.estado, self.actual = estado, actual or self.actual
         self.refrescar()
 
     def avanzar_bytes(self, n: int):
+        if n > 0:
+            self.marcar_inicio_subida()
         self.bytes_hechos = max(0, self.bytes_hechos + n)
         ahora = time.monotonic()
         if ahora - self._muestras[-1][0] >= 0.3:
@@ -238,7 +269,10 @@ class Progreso:
             self.al_cambiar(self)
 
     def transcurrido(self) -> float:
-        return time.monotonic() - self.t0
+        t_sub = self.transcurrido_subida()
+        if t_sub > 0:
+            return t_sub
+        return max(0.0, time.monotonic() - self.t0)
 
     def velocidad(self) -> float:
         """Bytes por segundo, promediados en los últimos ~6 s."""
@@ -414,6 +448,8 @@ class ClienteWebDAV:
     def put_archivo(self, rel: str, ruta_local: Path, prog: Optional[Progreso] = None) -> bool:
         tam = os.path.getsize(ruta_local)
         t0 = time.monotonic()
+        if prog:
+            prog.marcar_inicio_subida()
         for intento in range(REINTENTOS):
             lector = None
             causa = ""
@@ -430,7 +466,7 @@ class ClienteWebDAV:
                         r.close()
                 if cod in (200, 201, 204):
                     reg.info("put_archivo_ok", rel=rel, bytes=tam, intento=intento + 1,
-                             segundos=round(time.monotonic() - t0, 1))
+                             segundos_subida_red=round(time.monotonic() - t0, 2))
                     return True
                 causa = detalle
                 self.ultimo_error = f"PUT: {detalle}"
@@ -450,12 +486,14 @@ class ClienteWebDAV:
                   ultima_causa=self.ultimo_error)
         return False
 
-    def put_stream(self, rel: str, stream, tam: int, prog: Optional[Progreso] = None) -> bool:
-        """Sube un archivo desde la RAM de forma progresiva simulando un disco."""
-        t0 = time.monotonic()
+    def put_stream(self, rel: str, stream, tam: int, prog: Optional[Progreso] = None) -> Tuple[bool, float]:
+        """Sube un archivo desde la RAM de forma progresiva y devuelve (éxito, segundos_red)."""
+        if prog:
+            prog.marcar_inicio_subida()
         for intento in range(REINTENTOS):
             lector = None
             causa = ""
+            t_intento = time.monotonic()
             try:
                 stream.seek(0)
                 lector = _LectorProgreso(stream, prog)
@@ -468,13 +506,13 @@ class ClienteWebDAV:
                 finally:
                     r.close()
                 if cod in (200, 201, 204):
-                    return True
+                    return True, time.monotonic() - t_intento
                 causa = detalle
                 self.ultimo_error = f"PUT: {detalle}"
                 if cod < 500:
                     reg.error("put_stream_rechazado", rel=rel, bytes=tam, http=detalle,
                               intento=intento + 1)
-                    return False
+                    return False, time.monotonic() - t_intento
             except ErrorRed as ex:
                 causa = str(ex)
                 self.ultimo_error = causa
@@ -485,7 +523,7 @@ class ClienteWebDAV:
             time.sleep(2 * (intento + 1))
         reg.error("put_stream_agotado", rel=rel, bytes=tam, reintentos=REINTENTOS,
                   ultima_causa=self.ultimo_error)
-        return False
+        return False, 0.0
 
     def put_bytes(self, rel: str, datos: bytes) -> bool:
         for intento in range(REINTENTOS):
@@ -516,6 +554,8 @@ class ClienteWebDAV:
     def get_a_archivo(self, rel: str, destino: Path, prog: Optional[Progreso] = None) -> bool:
         destino.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.monotonic()
+        if prog:
+            prog.marcar_inicio_subida()
         for intento in range(REINTENTOS):
             recibido = 0
             causa = ""
@@ -539,7 +579,7 @@ class ClienteWebDAV:
                             if prog:
                                 prog.avanzar_bytes(len(bloque))
                     reg.info("get_archivo_ok", rel=rel, bytes=recibido, intento=intento + 1,
-                             segundos=round(time.monotonic() - t0, 1))
+                             segundos_descarga_red=round(time.monotonic() - t0, 2))
                     return True
                 finally:
                     r.close()
@@ -676,7 +716,10 @@ def cifrar_contenido(origen: Path, clave_gcm: bytes, destino: Path, id_archivo: 
                 if prog:
                     prog.poner("cifrando", origen.name)
             fo.write(c.digest())
-        reg.info("cifrado_ok", origen=origen, bytes=escritos, segundos=round(time.monotonic() - t0, 1))
+        dt = time.monotonic() - t0
+        if prog:
+            prog.sumar_preparacion(dt)
+        reg.info("cifrado_ok", origen=origen, bytes=escritos, segundos_cifrado=round(dt, 2))
         return True
     except (OSError, ValueError) as ex:
         _set_error_cripto(f"{type(ex).__name__}: {ex}")
@@ -718,7 +761,7 @@ def descifrar_contenido(blob: Path, clave_gcm: bytes, destino: Path, id_archivo:
                     restante -= len(bloque)
             c.verify(tag)
         os.replace(tmp, destino)
-        reg.info("descifrado_ok", destino=destino, bytes=tam, segundos=round(time.monotonic() - t0, 1))
+        reg.info("descifrado_ok", destino=destino, bytes=tam, segundos_descifrado=round(time.monotonic() - t0, 2))
         return True
     except ValueError as ex:
         _set_error_cripto("la etiqueta GCM no coincide (archivo alterado, incompleto o llave distinta)")
@@ -791,6 +834,7 @@ def cambiar_frase_nube(dav: ClienteWebDAV, frase_actual: Optional[str],
 # ===========================================================================
 def escanear_origen(carpeta: Path, prog: Optional[Progreso] = None) -> dict:
     """Cuenta carpetas, archivos y bytes que se van a subir (omite ocultos y enlaces)."""
+    t0_scan = time.monotonic()
     r = {"carpetas": 1, "archivos": 0, "bytes": 0, "omitidos": 0, "errores": []}
     if prog:
         prog.iniciar("Escaneando")
@@ -819,7 +863,9 @@ def escanear_origen(carpeta: Path, prog: Optional[Progreso] = None) -> dict:
                 r["errores"].append((str(e), str(ex)))
 
     _rec(carpeta)
+    dt_scan = time.monotonic() - t0_scan
     if prog:
+        prog.sumar_preparacion(dt_scan)
         prog.refrescar(True)
     return r
 
@@ -842,6 +888,7 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                   uuid_dir: Optional[str] = None,
                   tmp_dir: Optional[Path] = None) -> dict:
     prog = prog or Progreso()
+    t0_prep_init = time.monotonic()
     if not carpeta.is_dir():
         raise ErrorBoveda(f"No es una carpeta válida: {carpeta}")
     destino_padre = uuid_dir or llaves.root_uuid
@@ -849,6 +896,8 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
     if dav.existe(f"d/{destino_padre}/{nombre_top}"):
         raise ErrorBoveda(f"Ya existe '{carpeta.name}' en la carpeta de destino. "
                           "Renómbrala o bórrala antes de volver a subirla.")
+    prog.sumar_preparacion(time.monotonic() - t0_prep_init)
+
     if resumen is None:
         resumen = escanear_origen(carpeta, prog)
     if resumen["errores"]:
@@ -859,13 +908,22 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
 
     total_bytes = resumen["bytes"] + resumen["archivos"] * (GCM_NONCE_SIZE + GCM_TAG_SIZE)
     prog.iniciar("Subiendo", resumen["archivos"], resumen["carpetas"], total_bytes)
-    res = {"ok": 0, "carpetas": 0, "fallidos": [], "verificados": 0, "segundos_validacion": 0.0}
+    res = {
+        "ok": 0,
+        "carpetas": 0,
+        "fallidos": [],
+        "verificados": 0,
+        "segundos_validacion": 0.0,
+        "segundos_preparacion": 0.0,
+        "segundos_subida_red": 0.0,
+    }
     tmp_dir = tmp_dir or directorio_temporal()
 
     # Lock para proteger las mutaciones de 'res' desde hilos paralelos.
     _lock = threading.Lock()
 
     def _nueva_carpeta(uuid_padre: str, nombre: str) -> Optional[str]:
+        t0_c = time.monotonic()
         try:
             cif = cifrar_nombre(nombre, llaves.siv, uuid_padre)
         except ErrorBoveda as ex:
@@ -876,6 +934,8 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
         marca = (hijo + "\n").encode()
         if (dav.mkcol(f"d/{hijo}") and dav.put_bytes(f"d/{hijo}/dir.c9r", marca)
                 and dav.put_bytes(f"d/{uuid_padre}/{cif}", marca)):
+            dt_c = time.monotonic() - t0_c
+            prog.sumar_preparacion(dt_c)
             with _lock:
                 res["carpetas"] += 1
             prog.carpeta_lista()
@@ -890,8 +950,10 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
         id_arch = str(uuid.uuid4())
         motivo = None
         logrado = False
-        t_arch = time.monotonic()
+        t_prep_arch = 0.0
+        t_red_arch = 0.0
         try:
+            t0_meta = time.monotonic()
             try:
                 nombre_cif = cifrar_nombre(ruta.name, llaves.siv, uuid_dir)
             except ErrorBoveda as ex:
@@ -899,34 +961,49 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                 return
 
             tam_archivo = _tam_seguro(ruta)
-            prog.poner("subiendo multipart", ruta.name)
-            
+            prog.poner("preparando y cifrando", ruta.name)
+
             if not dav.mkcol(f"d/{id_arch}") or not dav.put_bytes(f"d/{id_arch}/dir.c9r", (id_arch + "\n").encode()):
                 motivo = "falló la creación de carpeta de archivo" + _detalle(dav)
                 dav.borrar(f"d/{id_arch}")
                 return
+            dt_meta = time.monotonic() - t0_meta
+            t_prep_arch += dt_meta
+            prog.sumar_preparacion(dt_meta)
 
             hubo_error = []
             _lock_partes = threading.Lock()
 
-            # Descontamos el tamaño fijo original que sumó este archivo, 
+            # Descontamos el tamaño fijo original que sumó este archivo,
             # lo agregaremos paso a paso para que la barra de progreso fluya al subir las partes.
             if prog:
                 prog.avanzar_bytes(-(tam_archivo + GCM_NONCE_SIZE + GCM_TAG_SIZE))
 
             def procesar_parte(indice: int, datos: bytes):
-                if hubo_error: return
+                nonlocal t_prep_arch, t_red_arch
+                if hubo_error:
+                    return
                 try:
+                    t0_cif = time.monotonic()
+                    prog.poner("cifrando parte", ruta.name)
                     aad = f"{id_arch}:{indice}".encode("utf-8")
                     nonce = get_random_bytes(GCM_NONCE_SIZE)
                     c = AES.new(llaves.gcm, AES.MODE_GCM, nonce=nonce)
                     c.update(aad)
                     ct, tag = c.encrypt_and_digest(datos)
                     blob = nonce + ct + tag
-                    
+                    dt_cif = time.monotonic() - t0_cif
+                    with _lock_partes:
+                        t_prep_arch += dt_cif
+                    prog.sumar_preparacion(dt_cif)
+
+                    prog.poner("subiendo a la nube", ruta.name)
                     rel_part = f"d/{id_arch}/{indice:04d}.part"
                     stream = io.BytesIO(blob)
-                    if not dav.put_stream(rel_part, stream, len(blob), prog):
+                    ok_part, dt_red = dav.put_stream(rel_part, stream, len(blob), prog)
+                    with _lock_partes:
+                        t_red_arch += dt_red
+                    if not ok_part:
                         with _lock_partes:
                             hubo_error.append(f"falló la subida de la parte {indice}")
                 except Exception as ex:
@@ -938,8 +1015,14 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                     futures_partes = []
                     indice = 0
                     while True:
-                        if hubo_error: break
+                        if hubo_error:
+                            break
+                        t0_read = time.monotonic()
                         bloque = f.read(TAM_PARTE_BYTES)
+                        dt_read = time.monotonic() - t0_read
+                        with _lock_partes:
+                            t_prep_arch += dt_read
+                        prog.sumar_preparacion(dt_read)
                         if not bloque and indice > 0:
                             break
                         futures_partes.append(exec_partes.submit(procesar_parte, indice, bloque))
@@ -948,7 +1031,7 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                             break
                     for fut in futures_partes:
                         fut.result()
-                        
+
             if hubo_error:
                 motivo = hubo_error[0]
                 dav.borrar(f"d/{id_arch}")
@@ -976,30 +1059,37 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                         aad = f"{id_arch}:{idx}".encode("utf-8")
                         c = AES.new(llaves.gcm, AES.MODE_GCM, nonce=nonce)
                         c.update(aad)
-                        c.verify(tag) 
+                        c.verify(tag)
                     except Exception:
                         motivo = f"la verificación GCM falló en parte {idx}"
                         error_verif = True
                         break
                     finally:
                         bajado.unlink(missing_ok=True)
-                        
+
                 if error_verif:
                     dav.borrar(f"d/{id_arch}")
                     return
                 else:
+                    dt_val = time.monotonic() - t_validacion
                     with _lock:
                         res["verificados"] += 1
-                    with _lock:
-                        res["segundos_validacion"] += time.monotonic() - t_validacion
+                        res["segundos_validacion"] += dt_val
+                    with prog._tiempo_lock:
+                        prog.segundos_validacion += dt_val
 
-            if not dav.put_bytes(f"d/{uuid_dir}/{nombre_cif}", (id_arch + "\n").encode()):
+            t0_reg = time.monotonic()
+            ok_reg = dav.put_bytes(f"d/{uuid_dir}/{nombre_cif}", (id_arch + "\n").encode())
+            dt_reg = time.monotonic() - t0_reg
+            t_red_arch += dt_reg
+            if not ok_reg:
                 motivo = "no se pudo registrar el nombre" + _detalle(dav)
                 dav.borrar(f"d/{id_arch}")
                 return
-                
+
             with _lock:
                 res["ok"] += 1
+                res["segundos_subida_red"] += t_red_arch
             logrado = True
 
         finally:
@@ -1007,12 +1097,17 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                 with _lock:
                     res["fallidos"].append((str(ruta), motivo))
                 reg.error("subida_archivo_fallo", archivo=ruta, motivo=motivo, id=id_arch,
-                          tam=_tam_seguro(ruta), verificar=verificar)
+                          tam=_tam_seguro(ruta), verificar=verificar,
+                          segundos_preparacion_cifrado=round(t_prep_arch, 2),
+                          segundos_subida_exclusiva=round(t_red_arch, 2))
             elif logrado:
                 reg.info("subida_archivo_ok", archivo=ruta, bytes=_tam_seguro(ruta), id=id_arch,
-                         segundos=round(time.monotonic() - t_arch, 1))
+                         segundos_preparacion_cifrado=round(t_prep_arch, 2),
+                         segundos_subida_exclusiva=round(t_red_arch, 2))
             else:
-                reg.aviso("subida_archivo_interrumpida", archivo=ruta, id=id_arch)
+                reg.aviso("subida_archivo_interrumpida", archivo=ruta, id=id_arch,
+                          segundos_preparacion_cifrado=round(t_prep_arch, 2),
+                          segundos_subida_exclusiva=round(t_red_arch, 2))
             prog.archivo_listo()
 
     def _procesar(ruta_dir: Path, uuid_dir: str, executor: ThreadPoolExecutor, futures: list):
@@ -1037,9 +1132,25 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
     prog.poner("", "")
     prog.refrescar(True)
     res["bytes"] = prog.bytes_hechos
-    res["segundos"] = max(0.001, prog.transcurrido() - res["segundos_validacion"])
+    t_subida_exclusiva = prog.transcurrido_subida()
+    if t_subida_exclusiva <= 0:
+        t_subida_exclusiva = res["segundos_subida_red"]
+    res["segundos"] = max(0.001, t_subida_exclusiva)
+    res["segundos_preparacion"] = round(prog.segundos_preparacion, 2)
     res["vel_media"] = res["bytes"] / res["segundos"]
+    reg.info(
+        "subida_carpeta_fin",
+        carpeta=carpeta.name,
+        archivos_ok=res["ok"],
+        carpetas_ok=res["carpetas"],
+        fallidos=len(res["fallidos"]),
+        bytes=res["bytes"],
+        segundos_preparacion_cifrado=res["segundos_preparacion"],
+        segundos_subida_exclusiva=round(res["segundos"], 2),
+        velocidad_media_Bps=round(res["vel_media"], 1),
+    )
     return res
+
 
 def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
                   verificar: bool = False, prog: Optional[Progreso] = None,
@@ -1047,6 +1158,7 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
                   tmp_dir: Optional[Path] = None) -> dict:
     """Sube UN archivo suelto a la raíz de la bóveda usando multipart en RAM."""
     prog = prog or Progreso()
+    t0_prep = time.monotonic()
     if not ruta.is_file():
         raise ErrorBoveda(f"No es un archivo válido: {ruta}")
 
@@ -1057,39 +1169,64 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
 
     tam_archivo = _tam_seguro(ruta)
     partes_estimadas = max(1, (tam_archivo + TAM_PARTE_BYTES - 1) // TAM_PARTE_BYTES)
+    dt_init = time.monotonic() - t0_prep
     prog.iniciar("Subiendo", 1, 0, tam_archivo + partes_estimadas * (GCM_NONCE_SIZE + GCM_TAG_SIZE))
-    
-    res = {"ok": 0, "verificados": 0, "fallidos": [], "segundos_validacion": 0.0}
+    prog.sumar_preparacion(dt_init)
+
+    res = {
+        "ok": 0,
+        "verificados": 0,
+        "fallidos": [],
+        "segundos_validacion": 0.0,
+        "segundos_preparacion": 0.0,
+        "segundos_subida_red": 0.0,
+    }
     id_arch = str(uuid.uuid4())
     tmp_dir = tmp_dir or directorio_temporal()
     motivo = None
-    t_arch = time.monotonic()
+    t_prep_arch = dt_init
+    t_red_arch = 0.0
     reg.info("subida_archivo_inicio", archivo=ruta, bytes=tam_archivo, id=id_arch, verificar=verificar)
-    
+
     try:
-        prog.poner("subiendo multipart", ruta.name)
-        
+        prog.poner("preparando y cifrando", ruta.name)
+        t0_mk = time.monotonic()
         if not dav.mkcol(f"d/{id_arch}") or not dav.put_bytes(f"d/{id_arch}/dir.c9r", (id_arch + "\n").encode()):
             motivo = "falló la creación de carpeta de archivo" + _detalle(dav)
             dav.borrar(f"d/{id_arch}")
             return res
+        dt_mk = time.monotonic() - t0_mk
+        t_prep_arch += dt_mk
+        prog.sumar_preparacion(dt_mk)
 
         hubo_error = []
         _lock_partes = threading.Lock()
 
         def procesar_parte(indice: int, datos: bytes):
-            if hubo_error: return
+            nonlocal t_prep_arch, t_red_arch
+            if hubo_error:
+                return
             try:
+                t0_cif = time.monotonic()
+                prog.poner("cifrando parte", ruta.name)
                 aad = f"{id_arch}:{indice}".encode("utf-8")
                 nonce = get_random_bytes(GCM_NONCE_SIZE)
                 c = AES.new(llaves.gcm, AES.MODE_GCM, nonce=nonce)
                 c.update(aad)
                 ct, tag = c.encrypt_and_digest(datos)
                 blob = nonce + ct + tag
-                
+                dt_cif = time.monotonic() - t0_cif
+                with _lock_partes:
+                    t_prep_arch += dt_cif
+                prog.sumar_preparacion(dt_cif)
+
+                prog.poner("subiendo a la nube", ruta.name)
                 rel_part = f"d/{id_arch}/{indice:04d}.part"
                 stream = io.BytesIO(blob)
-                if not dav.put_stream(rel_part, stream, len(blob), prog):
+                ok_part, dt_red = dav.put_stream(rel_part, stream, len(blob), prog)
+                with _lock_partes:
+                    t_red_arch += dt_red
+                if not ok_part:
                     with _lock_partes:
                         hubo_error.append(f"falló la subida de la parte {indice}")
             except Exception as ex:
@@ -1101,8 +1238,14 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
                 futures_partes = []
                 indice = 0
                 while True:
-                    if hubo_error: break
+                    if hubo_error:
+                        break
+                    t0_read = time.monotonic()
                     bloque = f.read(TAM_PARTE_BYTES)
+                    dt_read = time.monotonic() - t0_read
+                    with _lock_partes:
+                        t_prep_arch += dt_read
+                    prog.sumar_preparacion(dt_read)
                     if not bloque and indice > 0:
                         break
                     futures_partes.append(exec_partes.submit(procesar_parte, indice, bloque))
@@ -1111,7 +1254,7 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
                         break
                 for fut in futures_partes:
                     fut.result()
-                    
+
         if hubo_error:
             motivo = hubo_error[0]
             dav.borrar(f"d/{id_arch}")
@@ -1138,42 +1281,60 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
                         aad = f"{id_arch}:{idx}".encode("utf-8")
                         c = AES.new(llaves.gcm, AES.MODE_GCM, nonce=nonce)
                         c.update(aad)
-                        c.verify(tag) 
+                        c.verify(tag)
                     except Exception:
                         motivo = f"la verificación GCM falló en parte {idx}"
                         error_verif = True
                         break
                     finally:
                         bajado.unlink(missing_ok=True)
-                        
+
                 if error_verif:
                     dav.borrar(f"d/{id_arch}")
                 else:
+                    dt_val = time.monotonic() - t_validacion
                     res["verificados"] += 1
-                    res["segundos_validacion"] += time.monotonic() - t_validacion
+                    res["segundos_validacion"] += dt_val
+                    with prog._tiempo_lock:
+                        prog.segundos_validacion += dt_val
 
             if not motivo:
-                if not dav.put_bytes(f"d/{destino_dir}/{nombre_cif}", (id_arch + "\n").encode()):
+                t0_reg = time.monotonic()
+                ok_reg = dav.put_bytes(f"d/{destino_dir}/{nombre_cif}", (id_arch + "\n").encode())
+                dt_reg = time.monotonic() - t0_reg
+                t_red_arch += dt_reg
+                if not ok_reg:
                     motivo = "no se pudo registrar el nombre" + _detalle(dav)
                     dav.borrar(f"d/{id_arch}")
                 else:
                     res["ok"] += 1
     finally:
+        res["segundos_preparacion"] = round(t_prep_arch, 2)
+        res["segundos_subida_red"] = round(t_red_arch, 2)
         if motivo:
             res["fallidos"].append((str(ruta), motivo))
             reg.error("subida_archivo_fallo", archivo=ruta, motivo=motivo, id=id_arch,
-                      tam=tam_archivo, verificar=verificar)
+                      tam=tam_archivo, verificar=verificar,
+                      segundos_preparacion_cifrado=round(t_prep_arch, 2),
+                      segundos_subida_exclusiva=round(t_red_arch, 2))
         elif res["ok"]:
             reg.info("subida_archivo_ok", archivo=ruta, bytes=tam_archivo, id=id_arch,
-                     verificado=bool(res["verificados"]), segundos=round(time.monotonic() - t_arch, 1))
+                     verificado=bool(res["verificados"]),
+                     segundos_preparacion_cifrado=round(t_prep_arch, 2),
+                     segundos_subida_exclusiva=round(t_red_arch, 2))
         else:
-            reg.aviso("subida_archivo_interrumpida", archivo=ruta, id=id_arch)
+            reg.aviso("subida_archivo_interrumpida", archivo=ruta, id=id_arch,
+                      segundos_preparacion_cifrado=round(t_prep_arch, 2),
+                      segundos_subida_exclusiva=round(t_red_arch, 2))
         prog.archivo_listo()
         prog.poner("", "")
         prog.refrescar(True)
-        
+
     res["bytes"] = prog.bytes_hechos
-    res["segundos"] = max(0.001, prog.transcurrido() - res["segundos_validacion"])
+    t_subida_exclusiva = prog.transcurrido_subida()
+    if t_subida_exclusiva <= 0:
+        t_subida_exclusiva = t_red_arch
+    res["segundos"] = max(0.001, t_subida_exclusiva)
     res["vel_media"] = res["bytes"] / res["segundos"]
     return res
 
@@ -1182,6 +1343,7 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
 # Cifrado local portátil
 # ===========================================================================
 LOCAL_MAGIC = b"Mixcoara-LOCAL-1\n"
+
 
 def cifrar_archivo_local(origen: Path, clave_gcm: bytes, destino: Path) -> Path:
     """Cifra un archivo local; el identificador autenticado queda en la cabecera."""
@@ -1193,6 +1355,7 @@ def cifrar_archivo_local(origen: Path, clave_gcm: bytes, destino: Path) -> Path:
     nonce = get_random_bytes(GCM_NONCE_SIZE)
     cifrador = AES.new(clave_gcm, AES.MODE_GCM, nonce=nonce)
     cifrador.update(identificador.encode("ascii"))
+    t0 = time.monotonic()
     try:
         with origen.open("rb") as entrada, temporal.open("wb") as salida:
             salida.write(LOCAL_MAGIC)
@@ -1202,16 +1365,19 @@ def cifrar_archivo_local(origen: Path, clave_gcm: bytes, destino: Path) -> Path:
                 salida.write(cifrador.encrypt(bloque))
             salida.write(cifrador.digest())
         os.replace(temporal, destino)
-        reg.info("cifrado_local_ok", origen=origen, destino=destino, bytes=destino.stat().st_size)
+        reg.info("cifrado_local_ok", origen=origen, destino=destino,
+                 bytes=destino.stat().st_size, segundos_cifrado=round(time.monotonic() - t0, 2))
         return destino
     except Exception as ex:
         temporal.unlink(missing_ok=True)
         reg.error("cifrado_local_fallo", exc=ex, origen=origen, destino=destino)
         raise ErrorBoveda(f"No se pudo cifrar el archivo local: {type(ex).__name__}: {ex}") from ex
 
+
 def descifrar_archivo_local(origen: Path, clave_gcm: bytes, destino: Path) -> Path:
     """Descifra un archivo .Mixcoara y no conserva salida si falla GCM."""
     temporal = destino.with_name(destino.name + ".parcial")
+    t0 = time.monotonic()
     try:
         with origen.open("rb") as entrada:
             if entrada.readline() != LOCAL_MAGIC:
@@ -1240,7 +1406,8 @@ def descifrar_archivo_local(origen: Path, clave_gcm: bytes, destino: Path) -> Pa
                     restante -= len(bloque)
             cifrador.verify(tag)
         os.replace(temporal, destino)
-        reg.info("descifrado_local_ok", origen=origen, destino=destino, bytes=destino.stat().st_size)
+        reg.info("descifrado_local_ok", origen=origen, destino=destino,
+                 bytes=destino.stat().st_size, segundos_descifrado=round(time.monotonic() - t0, 2))
         return destino
     except ErrorBoveda as ex:
         temporal.unlink(missing_ok=True)
@@ -1260,6 +1427,7 @@ def _nombre_seguro(n: str) -> bool:
 
 
 def planificar_restauracion(dav: ClienteWebDAV, llaves: Llaves, prog: Progreso):
+    t0_plan = time.monotonic()
     prog.iniciar("Leyendo estructura")
     dirs: List[Path] = []
     archivos: List[Tuple[str, Path, int]] = []
@@ -1284,13 +1452,13 @@ def planificar_restauracion(dav: ClienteWebDAV, llaves: Llaves, prog: Progreso):
                 errores.append((nombre_cif, "nombre con caracteres peligrosos"))
                 continue
             hijo_entradas = dav.listar_detalle(f"d/{uuid_hijo}")
-            
+
             # Sumar tamaños del legado y de multipart
             tam = None
             for n, d, t in hijo_entradas:
                 if (n == f"{uuid_hijo}.bin" or n.endswith(".part")) and not d:
                     tam = (tam or 0) + t
-                    
+
             rel_hijo = rel / nombre
             if tam is not None:
                 archivos.append((uuid_hijo, rel_hijo, tam))
@@ -1301,6 +1469,7 @@ def planificar_restauracion(dav: ClienteWebDAV, llaves: Llaves, prog: Progreso):
             prog.refrescar()
 
     _rec(llaves.root_uuid, Path("."), dav.listar_detalle(f"d/{llaves.root_uuid}"))
+    prog.sumar_preparacion(time.monotonic() - t0_plan)
     prog.refrescar(True)
     return dirs, archivos, errores
 
@@ -1324,10 +1493,12 @@ def restaurar(dav: ClienteWebDAV, llaves: Llaves, destino: Path,
         prog.poner("descargando", rel.name)
         entradas = dav.listar_detalle(f"d/{uuid_h}")
         partes = sorted([n for n, d, t in entradas if n.endswith(".part") and not d])
-        
+
         if partes:
             try:
-                with open(destino / rel, "wb") as f_out:
+                destino_arch = destino / rel
+                destino_arch.parent.mkdir(parents=True, exist_ok=True)
+                with open(destino_arch, "wb") as f_out:
                     error_descarga = False
                     for parte in partes:
                         prog.poner("descargando parte", f"{rel.name} ({parte})")
@@ -1336,7 +1507,8 @@ def restaurar(dav: ClienteWebDAV, llaves: Llaves, destino: Path,
                             res["errores"].append((str(rel), f"falló la descarga de {parte}"))
                             error_descarga = True
                             break
-                        
+
+                        t0_dec = time.monotonic()
                         try:
                             tam_parte = tmp_parte.stat().st_size
                             with open(tmp_parte, "rb") as fi:
@@ -1345,20 +1517,21 @@ def restaurar(dav: ClienteWebDAV, llaves: Llaves, destino: Path,
                                 tag = fi.read(GCM_TAG_SIZE)
                                 fi.seek(GCM_NONCE_SIZE)
                                 ct = fi.read(tam_parte - GCM_NONCE_SIZE - GCM_TAG_SIZE)
-                            
+
                             indice = int(parte.split(".")[0])
                             aad = f"{uuid_h}:{indice}".encode("utf-8")
                             c = AES.new(llaves.gcm, AES.MODE_GCM, nonce=nonce)
                             c.update(aad)
                             claro = c.decrypt_and_verify(ct, tag)
                             f_out.write(claro)
+                            prog.sumar_preparacion(time.monotonic() - t0_dec)
                         except Exception as e:
                             res["errores"].append((str(rel), f"falló descifrado de la parte {parte}: {e}"))
                             error_descarga = True
                             break
                         finally:
                             tmp_parte.unlink(missing_ok=True)
-                            
+
                 if error_descarga:
                     (destino / rel).unlink(missing_ok=True)
                 else:
@@ -1366,25 +1539,28 @@ def restaurar(dav: ClienteWebDAV, llaves: Llaves, destino: Path,
             except Exception as e:
                 res["errores"].append((str(rel), f"error general de restauración multipart: {e}"))
                 (destino / rel).unlink(missing_ok=True)
-                
+
         else:
             tmp = tmp_dir / f"desc_{uuid_h}.bin"
             if not dav.get_a_archivo(f"d/{uuid_h}/{uuid_h}.bin", tmp, prog):
                 res["errores"].append((str(rel), "no se pudo descargar (archivo legado)"))
             else:
+                t0_dec = time.monotonic()
                 prog.poner("descifrando legado", rel.name)
                 if descifrar_contenido(tmp, llaves.gcm, destino / rel, uuid_h):
                     res["archivos"] += 1
                 else:
                     res["errores"].append((str(rel), "falló el descifrado (GCM legado)"))
+                prog.sumar_preparacion(time.monotonic() - t0_dec)
             tmp.unlink(missing_ok=True)
-            
+
         prog.archivo_listo()
 
     prog.poner("", "")
     prog.refrescar(True)
     res["bytes"] = prog.bytes_hechos
     res["segundos"] = prog.transcurrido()
+    res["segundos_preparacion"] = round(prog.segundos_preparacion, 2)
     res["vel_media"] = prog.velocidad_media()
     return res
 
@@ -1453,7 +1629,9 @@ def _desbloquear(dav: ClienteWebDAV) -> Llaves:
 
 
 def _resumen_final(res: dict):
-    print(f"   Tiempo total : {fmt_tiempo(res['segundos'])}")
+    if "segundos_preparacion" in res:
+        print(f"   Prep/cifrado : {fmt_tiempo(res['segundos_preparacion'])}")
+    print(f"   Tiempo subida: {fmt_tiempo(res['segundos'])}")
     print(f"   Transferido  : {fmt_bytes(res['bytes'])}")
     mbps = res["vel_media"] * 8 / 1_000_000
     print(f"   Velocidad    : {fmt_bytes(res['vel_media'])}/s promedio ({mbps:.1f} Mbps)")

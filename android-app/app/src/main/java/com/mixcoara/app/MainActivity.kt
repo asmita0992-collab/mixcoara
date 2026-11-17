@@ -3,21 +3,28 @@ package com.mixcoara.app
 import com.tlahuis.mixcoara.R
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
+import android.util.Rational
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
@@ -37,6 +44,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -60,6 +68,9 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SelectAll
@@ -102,6 +113,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -122,6 +134,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mixcoara.app.ui.theme.MixcoaraTheme
+import com.mixcoara.app.ui.theme.MixcoaraThemeId
 import androidx.activity.compose.setContent
 import com.tlahuis.mixcoara.BuildConfig
 import java.io.File
@@ -129,13 +142,161 @@ import java.io.FileOutputStream
 
 class MainActivity : FragmentActivity() {
     private val viewModel: MixcoaraViewModel by viewModels()
+    private var isInPipModeState by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MixcoaraTheme {
-                StoragePermissionGate {
-                    MixcoaraApp(this@MainActivity, viewModel)
+            val state by viewModel.state.collectAsStateWithLifecycle()
+            LaunchedEffect(state.activeProgress != null) {
+                updatePipParams(state.activeProgress != null)
+            }
+            MixcoaraTheme(themeId = state.themeId) {
+                if (isInPipModeState) {
+                    PipTransferOverlay(progress = state.activeProgress)
+                } else {
+                    StoragePermissionGate {
+                        MixcoaraApp(
+                            activity = this@MainActivity,
+                            viewModel = viewModel,
+                            onEnterPip = { enterTransferPip(force = true) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (viewModel.state.value.activeProgress != null) {
+            enterTransferPip(force = true)
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipModeState = isInPictureInPictureMode
+    }
+
+    private fun updatePipParams(hasActiveTransfer: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                val builder =
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setAutoEnterEnabled(hasActiveTransfer)
+                    builder.setSeamlessResizeEnabled(true)
+                }
+                setPictureInPictureParams(builder.build())
+            }
+        }
+    }
+
+    fun enterTransferPip(force: Boolean = false) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!force && viewModel.state.value.activeProgress == null) return
+            runCatching {
+                val params =
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .build()
+                enterPictureInPictureMode(params)
+            }.onFailure {
+                Toast.makeText(
+                    this,
+                    "No se pudo activar Pantalla en Pantalla (revisa permisos de PiP).",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+}
+
+@Composable
+private fun PipTransferOverlay(progress: TransferProgress?) {
+    Box(
+        modifier =
+            Modifier.fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (progress == null) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                MixcoaraMark(28)
+                Text(
+                    "Mixcoara · Operación finalizada",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                )
+            }
+        } else {
+            val pct = (progress.fraction * 100).toInt().coerceIn(0, 100)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        progress.phase.ifBlank { "Transfiriendo…" },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "$pct%",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+                if (progress.bytesTotal > 0) {
+                    LinearProgressIndicator(
+                        progress = { progress.fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                Text(
+                    progress.currentItem.ifBlank { progress.state.ifBlank { "Procesando…" } },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        if (progress.speedBytesPerSec > 0) "${formatBytes(progress.speedBytesPerSec.toLong())}/s"
+                        else "Prep: ${formatSeconds(progress.prepElapsedSec.toLong())}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Subida: ${formatSeconds(progress.uploadElapsedSec.toLong())}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -146,6 +307,8 @@ class MainActivity : FragmentActivity() {
 private fun StoragePermissionGate(content: @Composable () -> Unit) {
     val context = LocalContext.current
     var hasAccess by remember { mutableStateOf(hasStorageAccess(context)) }
+    val notificationLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val legacyLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions(),
@@ -154,6 +317,22 @@ private fun StoragePermissionGate(content: @Composable () -> Unit) {
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             hasAccess = hasStorageAccess(context)
         }
+
+    LaunchedEffect(hasAccess) {
+        if (hasAccess) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val granted =
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+                if (!granted) {
+                    notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+            requestBatteryOptimizationExemptionOnce(context)
+        }
+    }
 
     if (hasAccess) {
         content()
@@ -179,6 +358,27 @@ private fun StoragePermissionGate(content: @Composable () -> Unit) {
             }
         },
     )
+}
+
+private fun requestBatteryOptimizationExemptionOnce(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val prefs = context.getSharedPreferences("mixcoara_bg_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("battery_asked", false)) return
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(context.packageName)) {
+            prefs.edit().putBoolean("battery_asked", true).apply()
+            runCatching {
+                val intent =
+                    Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${context.packageName}"),
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                context.startActivity(intent)
+            }
+        }
+    }
 }
 
 private fun hasStorageAccess(context: Context): Boolean =
@@ -219,7 +419,6 @@ private fun PermissionScreen(onGrant: () -> Unit) {
                 textAlign = TextAlign.Center,
             )
             Button(onClick = onGrant) {
-
                 Text("Conceder acceso")
             }
         }
@@ -228,19 +427,36 @@ private fun PermissionScreen(onGrant: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel) {
+private fun MixcoaraApp(
+    activity: FragmentActivity,
+    viewModel: MixcoaraViewModel,
+    onEnterPip: () -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    var showThemeDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.error) {
         state.error?.let { snackbar.showSnackbar(it) }
+    }
+
+    if (showThemeDialog) {
+        ThemeSelectorDialog(
+            currentTheme = state.themeId,
+            onSelectTheme = {
+                viewModel.selectTheme(it)
+                showThemeDialog = false
+            },
+            onDismiss = { showThemeDialog = false },
+        )
     }
 
     state.activeProgress?.let { progress ->
         TransferProgressDialog(
             progress = progress,
             onCancel = viewModel::cancelActiveOperation,
+            onEnterPip = onEnterPip,
         )
     }
 
@@ -293,6 +509,9 @@ private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel
                         }
                     },
                     actions = {
+                        IconButton(onClick = { showThemeDialog = true }) {
+                            Icon(Icons.Rounded.Palette, contentDescription = "Cambiar tema visual")
+                        }
                         if (state.screen == AppScreen.VAULT) {
                             if (state.activeTab == AppTab.EXPLORER) {
                                 IconButton(onClick = viewModel::toggleVaultVisibility) {
@@ -386,7 +605,7 @@ private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel
                         biometricEnabled = state.biometricEnabled,
                         onUnlock = viewModel::unlock,
                         onBiometricRequested = {
-                            showBiometricPrompt(activity) { pass ->
+                            showBiometricOrCredentialPrompt(activity) { pass ->
                                 viewModel.unlock(pass)
                             }
                         },
@@ -428,9 +647,12 @@ private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel
                         AppTab.SECURITY ->
                             SecurityScreen(
                                 biometricEnabled = state.biometricEnabled,
+                                currentTheme = state.themeId,
+                                onSelectTheme = viewModel::selectTheme,
                                 onPassphraseChange = viewModel::changePassphrase,
                                 onRegenerateRecoveryKey = viewModel::regenerateRecoveryKey,
                                 onBiometricToggle = viewModel::setBiometricEnabled,
+                                onEnterPip = onEnterPip,
                             )
                         AppTab.ABOUT -> AboutAndChangelogScreen()
                         AppTab.LOGS ->
@@ -464,10 +686,78 @@ private fun tabSubtitle(tab: AppTab): String =
     when (tab) {
         AppTab.EXPLORER -> "Explorador en la nube"
         AppTab.LOCAL_VAULT -> "Bóveda local portátil"
-        AppTab.SECURITY -> "Seguridad y llaves"
+        AppTab.SECURITY -> "Seguridad, temas y segundo plano"
         AppTab.LOGS -> "Registro de actividad"
         AppTab.ABOUT -> "Acerca de y cambios"
     }
+
+@Composable
+private fun ThemeSelectorDialog(
+    currentTheme: MixcoaraThemeId,
+    onSelectTheme: (MixcoaraThemeId) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Temas visuales", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MixcoaraThemeId.entries.forEach { option ->
+                    val selected = option == currentTheme
+                    Card(
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor =
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                            ),
+                        border =
+                            if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            else null,
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .clickable { onSelectTheme(option) },
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(
+                                modifier =
+                                    Modifier.size(36.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(option.previewBg)
+                                        .border(1.dp, option.previewAccent, RoundedCornerShape(10.dp)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    modifier =
+                                        Modifier.size(16.dp)
+                                            .clip(CircleShape)
+                                            .background(option.previewAccent),
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(option.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    option.description + if (selected) " · Aplicado" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        },
+    )
+}
 
 @Composable
 private fun UnlockScreen(
@@ -503,14 +793,15 @@ private fun UnlockScreen(
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
-
-                Text("Desbloquear con biometría", fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Rounded.Fingerprint, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Desbloquear con biometría o PIN/patrón", fontWeight = FontWeight.SemiBold)
             }
         }
     }
 }
 
-private fun showBiometricPrompt(
+private fun showBiometricOrCredentialPrompt(
     activity: FragmentActivity,
     onSuccess: (passphrase: String) -> Unit,
 ) {
@@ -525,14 +816,40 @@ private fun showBiometricPrompt(
                     val store = SecureConfigStore(activity)
                     store.loadBiometricPassphrase()?.let(onSuccess)
                 }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    if (
+                        errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                            errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                            errorCode != BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        Toast.makeText(activity, errString.toString(), Toast.LENGTH_SHORT).show()
+                    }
+                }
             },
         )
+
+    val allowedAuthenticators =
+        BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+
     val promptInfo =
-        BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Desbloquea tu bóveda Mixcoara")
-            .setSubtitle("Confirma tu huella digital o rostro")
-            .setNegativeButtonText("Usar frase manual")
-            .build()
+        runCatching {
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Desbloquea tu bóveda Mixcoara")
+                .setSubtitle("Usa tu huella, rostro, PIN, patrón, NIP o contraseña del dispositivo")
+                .setAllowedAuthenticators(allowedAuthenticators)
+                .build()
+        }.getOrElse {
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Desbloquea tu bóveda Mixcoara")
+                .setSubtitle("Confirma tu identidad o bloqueo de pantalla")
+                .setDeviceCredentialAllowed(true)
+                .build()
+        }
+
     prompt.authenticate(promptInfo)
 }
 
@@ -671,7 +988,6 @@ private fun VaultExplorerScreen(
                             contentColor = MaterialTheme.colorScheme.onPrimary,
                         ),
                 ) {
-
                     Text("Subir archivo")
                 }
                 OutlinedButton(
@@ -679,7 +995,6 @@ private fun VaultExplorerScreen(
                     enabled = !state.busy,
                     modifier = Modifier.weight(1f),
                 ) {
-
                     Text("Subir carpeta")
                 }
             }
@@ -696,9 +1011,8 @@ private fun VaultExplorerScreen(
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "${state.selectedEntryIds.size} seleccionados",
+                    ) {                        
+                    Text("${state.selectedEntryIds.size} seleccionados",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             modifier = Modifier.weight(1f),
@@ -895,7 +1209,6 @@ private fun LocalVaultScreen(
             onClick = { filePicker.launch(arrayOf("*/*")) },
             modifier = Modifier.fillMaxWidth(),
         ) {
-
             Text("Elegir archivo con selector nativo…")
         }
         Card(
@@ -911,9 +1224,8 @@ private fun LocalVaultScreen(
             onClick = { onEncrypt(filePath.trim(), "") },
             enabled = filePath.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary, contentColor = Color.Black),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary, contentColor = MaterialTheme.colorScheme.onTertiary),
         ) {
-
             Text("Cifrar a Bóveda Local (.mixcoara)", fontWeight = FontWeight.Bold)
         }
         OutlinedButton(
@@ -921,7 +1233,6 @@ private fun LocalVaultScreen(
             enabled = filePath.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp),
         ) {
-
             Text("Descifrar archivo", fontWeight = FontWeight.Bold)
         }
     }
@@ -930,70 +1241,156 @@ private fun LocalVaultScreen(
 @Composable
 private fun SecurityScreen(
     biometricEnabled: Boolean,
+    currentTheme: MixcoaraThemeId,
+    onSelectTheme: (MixcoaraThemeId) -> Unit,
     onPassphraseChange: (current: String, newPass: String, repeatPass: String) -> Unit,
     onRegenerateRecoveryKey: (currentPass: String) -> Unit,
     onBiometricToggle: (enabled: Boolean, pass: String) -> Unit,
+    onEnterPip: () -> Unit,
 ) {
+    val context = LocalContext.current
     var currentPass by rememberSaveable { mutableStateOf("") }
     var newPass by rememberSaveable { mutableStateOf("") }
     var repeatPass by rememberSaveable { mutableStateOf("") }
     var recCurrentPass by rememberSaveable { mutableStateOf("") }
     var bioPass by rememberSaveable { mutableStateOf("") }
 
+    val notifLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            Toast.makeText(
+                context,
+                if (granted) "Permiso de notificaciones concedido." else "Permiso de notificaciones no concedido.",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+
     ScreenList {
         HeroCard(
-            title = "Seguridad de la bóveda",
-            body = "Reenvuelve la llave maestra sin recifrar archivos y administra tus llaves de recuperación.",
+            title = "Seguridad, temas y segundo plano",
+            body = "Administra temas visuales, biometría/PIN, permisos de segundo plano, PiP y llaves.",
         )
-        SectionLabel("CAMBIAR FRASE DE LA BÓVEDA")
-        PasswordField(value = currentPass, onValueChange = { currentPass = it }, label = "Frase actual", enabled = true)
-        PasswordField(value = newPass, onValueChange = { newPass = it }, label = "Frase nueva (mínimo 12 caracteres)", enabled = true)
-        PasswordField(value = repeatPass, onValueChange = { repeatPass = it }, label = "Repite la frase nueva", enabled = true)
-        Button(
-            onClick = {
-                onPassphraseChange(currentPass, newPass, repeatPass)
-                currentPass = ""
-                newPass = ""
-                repeatPass = ""
-            },
-            enabled = currentPass.isNotBlank() && newPass.length >= 12 && newPass == repeatPass,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-        ) {
 
-            Text("Actualizar frase segura")
+        SectionLabel("APARIENCIA · TEMAS VISUALES")
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Tema activo: ${currentTheme.title}",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                MixcoaraThemeId.entries.forEach { option ->
+                    val selected = option == currentTheme
+                    Row(
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surface,
+                                )
+                                .clickable { onSelectTheme(option) }
+                                .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier =
+                                Modifier.size(28.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(option.previewBg)
+                                    .border(1.dp, option.previewAccent, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier =
+                                    Modifier.size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(option.previewAccent),
+                            )
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(option.title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                            Text(option.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (selected) {
+                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
         }
 
-        Spacer(Modifier.height(8.dp))
-        SectionLabel("CLAVE DE RECUPERACIÓN")
-        Text(
-            "Genera una nueva clave Base32. La clave de recuperación anterior dejará de servir.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        PasswordField(value = recCurrentPass, onValueChange = { recCurrentPass = it }, label = "Frase actual de la bóveda", enabled = true)
-        OutlinedButton(
-            onClick = {
-                onRegenerateRecoveryKey(recCurrentPass)
-                recCurrentPass = ""
-            },
-            enabled = recCurrentPass.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-        ) {
-            Icon(Icons.Rounded.Refresh, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Generar nueva clave de recuperación")
+        Spacer(Modifier.height(4.dp))
+        SectionLabel("NOTIFICACIONES, SEGUNDO PLANO Y PIP")
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Permisos para transferencias continuas",
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Activa las notificaciones y el uso de batería sin restricciones para que las subidas y descargas continúen aunque apagues la pantalla o uses otra aplicación.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            val intent =
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                }
+                            runCatching { context.startActivity(intent) }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.Notifications, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Permitir notificaciones de Mixcoara")
+                }
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            val intent =
+                                Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:${context.packageName}"),
+                                )
+                            context.startActivity(intent)
+                        }.onFailure {
+                            runCatching {
+                                context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Batería sin restricciones (segundo plano)")
+                }
+                OutlinedButton(
+                    onClick = onEnterPip,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.PictureInPictureAlt, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Probar Pantalla en Pantalla (PiP)")
+                }
+            }
         }
 
-        Spacer(Modifier.height(8.dp))
-        SectionLabel("BIOMETRÍA / ANDROID KEYSTORE")
+        Spacer(Modifier.height(4.dp))
+        SectionLabel("BIOMETRÍA Y BLOQUEO DEL DISPOSITIVO")
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Acceso con huella o rostro", fontWeight = FontWeight.Bold)
+                        Text("Huella, rostro, PIN, patrón, NIP o contraseña", fontWeight = FontWeight.Bold)
                         Text(
-                            if (biometricEnabled) "Activo: frase sellada con clave AES en KeyStore."
-                            else "Inactivo: debes escribir la frase completa al abrir.",
+                            if (biometricEnabled) "Activo: puedes desbloquear con biometría o con el PIN, patrón, NIP o contraseña del teléfono."
+                            else "Inactivo: debes escribir la frase de la bóveda manualmente al abrir.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1022,11 +1419,51 @@ private fun SecurityScreen(
                         enabled = bioPass.length >= 12,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-
-                        Text("Activar acceso biométrico")
+                        Icon(Icons.Rounded.Fingerprint, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Activar acceso por biometría / PIN / patrón")
                     }
                 }
             }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        SectionLabel("CAMBIAR FRASE DE LA BÓVEDA")
+        PasswordField(value = currentPass, onValueChange = { currentPass = it }, label = "Frase actual", enabled = true)
+        PasswordField(value = newPass, onValueChange = { newPass = it }, label = "Frase nueva (mínimo 12 caracteres)", enabled = true)
+        PasswordField(value = repeatPass, onValueChange = { repeatPass = it }, label = "Repite la frase nueva", enabled = true)
+        Button(
+            onClick = {
+                onPassphraseChange(currentPass, newPass, repeatPass)
+                currentPass = ""
+                newPass = ""
+                repeatPass = ""
+            },
+            enabled = currentPass.isNotBlank() && newPass.length >= 12 && newPass == repeatPass,
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+        ) {
+            Text("Actualizar frase segura")
+        }
+
+        Spacer(Modifier.height(8.dp))
+        SectionLabel("CLAVE DE RECUPERACIÓN")
+        Text(
+            "Genera una nueva clave Base32. La clave de recuperación anterior dejará de servir.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        PasswordField(value = recCurrentPass, onValueChange = { recCurrentPass = it }, label = "Frase actual de la bóveda", enabled = true)
+        OutlinedButton(
+            onClick = {
+                onRegenerateRecoveryKey(recCurrentPass)
+                recCurrentPass = ""
+            },
+            enabled = recCurrentPass.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+        ) {
+            Icon(Icons.Rounded.Refresh, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Generar nueva clave de recuperación")
         }
     }
 }
@@ -1044,7 +1481,7 @@ private fun LogsScreen(
     ScreenList {
         HeroCard(
             title = "Bitácora de actividad",
-            body = "Registro técnico rotativo de operaciones, tiempos y códigos HTTP. Contraseñas y frases se censuran.",
+            body = "Registro técnico rotativo con tiempos separados de preparación/cifrado y de subida exclusiva. Contraseñas y frases se censuran.",
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1101,6 +1538,7 @@ private fun LogsScreen(
 private fun TransferProgressDialog(
     progress: TransferProgress,
     onCancel: () -> Unit,
+    onEnterPip: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = {},
@@ -1108,7 +1546,17 @@ private fun TransferProgressDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                 Spacer(Modifier.width(12.dp))
-                Text(progress.phase.ifBlank { "Transfiriendo…" }, fontWeight = FontWeight.Bold)
+                Text(
+                    progress.phase.ifBlank { "Transfiriendo…" },
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onEnterPip) {
+                    Icon(
+                        Icons.Rounded.PictureInPictureAlt,
+                        contentDescription = "Minimizar a Pantalla en Pantalla (PiP)",
+                    )
+                }
             }
         },
         text = {
@@ -1175,13 +1623,25 @@ private fun TransferProgressDialog(
                     )
                 }
                 Text(
-                    "Tiempo: ${formatSeconds(progress.elapsedSec.toLong())}",
+                    "Tiempo de preparación/cifrado: ${formatSecondsDecimal(progress.prepElapsedSec)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    "Tiempo exclusivo de transferencia: ${formatSecondsDecimal(progress.uploadElapsedSec)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
         },
-        confirmButton = {},
+        confirmButton = {
+            OutlinedButton(onClick = onEnterPip) {
+                Icon(Icons.Rounded.PictureInPictureAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("PiP")
+            }
+        },
         dismissButton = {
             Button(
                 onClick = onCancel,
@@ -1215,8 +1675,15 @@ private fun TransferSummaryDialog(
                 if (summary.bytesCount > 0) {
                     Text("Volumen transferido: ${formatBytes(summary.bytesCount)}")
                 }
+                if (summary.prepElapsedSec > 0) {
+                    Text("Tiempo previo (preparación y cifrado): ${formatSecondsDecimal(summary.prepElapsedSec)}")
+                }
                 if (summary.elapsedSec > 0) {
-                    Text("Tiempo empleado: ${formatSeconds(summary.elapsedSec.toLong())}")
+                    Text(
+                        "Tiempo exclusivo de transferencia: ${formatSecondsDecimal(summary.elapsedSec)}",
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
                 Text("Ubicación: ${summary.destination}")
                 if (summary.errors.isNotEmpty()) {
@@ -1254,7 +1721,6 @@ private fun UploadFileDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { onSelectWithPicker(verify) }, modifier = Modifier.fillMaxWidth()) {
-
                     Text("Elegir con selector de Android")
                 }
                 Text("O ingresa la ruta directa:", style = MaterialTheme.typography.bodySmall)
@@ -1314,7 +1780,6 @@ private fun UploadFolderDialog(
                     Text("Validar por separado después de subir", style = MaterialTheme.typography.bodySmall)
                 }
                 OutlinedButton(onClick = { onSelectWithPicker(verify) }, modifier = Modifier.fillMaxWidth()) {
-
                     Text("Seleccionar carpeta con Android")
                 }
             }
@@ -1348,6 +1813,14 @@ private fun formatSeconds(seconds: Long): String {
     val m = seconds / 60
     val s = seconds % 60
     return if (m > 0) "${m}m ${s}s" else "${s}s"
+}
+
+private fun formatSecondsDecimal(seconds: Double): String {
+    if (seconds < 60.0) return "%.2f s".format(seconds)
+    val totalSec = seconds.toLong()
+    val m = totalSec / 60
+    val s = seconds - (m * 60)
+    return "${m}m %.1fs".format(s)
 }
 
 @Composable

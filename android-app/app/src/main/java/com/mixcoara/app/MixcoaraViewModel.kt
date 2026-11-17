@@ -3,9 +3,11 @@ package com.mixcoara.app
 import android.app.Application
 import android.net.Uri
 import android.os.Environment
+import android.os.SystemClock
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.mixcoara.app.ui.theme.MixcoaraThemeId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -26,7 +28,7 @@ import java.util.UUID
 class MixcoaraViewModel(application: Application) : AndroidViewModel(application) {
     private val bridge = PythonBridge(application)
     private val store = SecureConfigStore(application)
-    private val _state = MutableStateFlow(MixcoaraUiState())
+    private val _state = MutableStateFlow(MixcoaraUiState(themeId = store.loadTheme()))
     val state: StateFlow<MixcoaraUiState> = _state.asStateFlow()
     private var currentRootUuid: String = ""
     private val localCancellation = mutableSetOf<String>()
@@ -35,14 +37,21 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
         runSelfTest()
     }
 
+    fun selectTheme(themeId: MixcoaraThemeId) {
+        store.saveTheme(themeId)
+        _state.update { it.copy(themeId = themeId) }
+    }
+
     private fun runSelfTest() {
         viewModelScope.launch {
+            val savedTheme = store.loadTheme()
             val result = withContext(Dispatchers.IO) { bridge.selfTest() }
             if (!result.ok) {
                 _state.update {
                     it.copy(
                         busy = false,
                         cryptoReady = false,
+                        themeId = savedTheme,
                         error = result.message.ifBlank { "Falló la prueba criptográfica." },
                         message = "No se puede continuar con seguridad.",
                     )
@@ -59,6 +68,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                     busy = saved != null,
                     cryptoReady = true,
                     biometricEnabled = hasBio,
+                    themeId = savedTheme,
                     error = null,
                     message =
                         if (saved == null) "Configura tu servidor WebDAV."
@@ -298,7 +308,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
     fun retrySelfTest() {
         _state.value.sessionId?.let(bridge::close)
         _state.value.let {
-            _state.value = MixcoaraUiState(config = it.config)
+            _state.value = MixcoaraUiState(config = it.config, themeId = it.themeId)
         }
         runSelfTest()
     }
@@ -385,7 +395,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
         title: String,
         launchCall: suspend (opId: String) -> BridgeResult,
         cleanupAfter: suspend (opId: String) -> Unit = {},
-        onCompleted: (JSONObject?) -> Unit,
+        onCompleted: (JSONObject?, Double) -> Unit,
     ) {
         val opId = UUID.randomUUID().toString()
         synchronized(localCancellation) {
@@ -408,7 +418,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             var doneResult: JSONObject? = null
             var doneError: String? = null
             var lastProgress = TransferProgress(opId = opId, phase = title)
+            var stagingSec = 0.0
             try {
+                val t0Staging = SystemClock.elapsedRealtime()
                 val initResult =
                     withContext(Dispatchers.IO) {
                         try {
@@ -422,6 +434,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                             )
                         }
                     }
+                stagingSec = (SystemClock.elapsedRealtime() - t0Staging) / 1000.0
                 if (!initResult.ok) {
                     doneError = initResult.message.ifBlank { "No se pudo iniciar la operación." }
                     return@launch
@@ -464,6 +477,8 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                     val percentInt = (fraction * 100).toInt().coerceIn(0, 100)
                     val phase = p.optString("fase")
                     val currentItem = p.optString("actual")
+                    val pyPrepSec = p.optDouble("segundos_preparacion", 0.0)
+                    val pyUploadSec = p.optDouble("segundos_subida", p.optDouble("transcurrido", 0.0))
 
                     val progress =
                         TransferProgress(
@@ -479,7 +494,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                             bytesDone = p.optLong("bytes_hechos"),
                             bytesTotal = p.optLong("bytes_total"),
                             speedBytesPerSec = p.optDouble("velocidad", 0.0),
-                            elapsedSec = p.optDouble("transcurrido", 0.0),
+                            elapsedSec = pyUploadSec,
+                            prepElapsedSec = stagingSec + pyPrepSec,
+                            uploadElapsedSec = pyUploadSec,
                             etaSec = if (p.has("eta") && !p.isNull("eta")) p.optDouble("eta") else null,
                             isCancelled = isCancelled,
                             isFinished = isDone,
@@ -492,7 +509,15 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                     MixcoaraForegroundService.update(
                         getApplication(),
                         title = phase.ifBlank { title },
-                        text = progress.state.ifBlank { currentItem.ifBlank { "${progress.bytesDone} B procesados" } },
+                        text =
+                            buildString {
+                                val st = progress.state.ifBlank { currentItem }
+                                if (st.isNotBlank()) append(st)
+                                if (progress.bytesTotal > 0) {
+                                    if (isNotEmpty()) append(" • ")
+                                    append("$percentInt%")
+                                }
+                            }.ifBlank { "${progress.bytesDone} B procesados" },
                         progress = if (progress.bytesTotal > 0) percentInt else -1,
                     )
 
@@ -530,8 +555,26 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                 _state.update { it.copy(activeProgress = null) }
                 if (!doneError.isNullOrBlank()) {
                     _state.update { it.copy(error = doneError) }
+                    MixcoaraForegroundService.notifyFinished(
+                        getApplication(),
+                        title = "Operación interrumpida",
+                        message = doneError,
+                        isError = true,
+                    )
                 } else {
-                    onCompleted(doneResult)
+                    onCompleted(doneResult, stagingSec)
+                    val summary = _state.value.transferSummary
+                    if (summary != null) {
+                        MixcoaraForegroundService.notifyFinished(
+                            getApplication(),
+                            title = summary.title,
+                            message = "Archivos: ${summary.filesCount} • Subida: %.1f s (Prep/cifrado: %.1f s)".format(
+                                summary.elapsedSec,
+                                summary.prepElapsedSec,
+                            ),
+                            isError = summary.errors.isNotEmpty(),
+                        )
+                    }
                     refresh()
                 }
             }
@@ -560,8 +603,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             launchCall = { opId ->
                 bridge.uploadFile(sessionId, localPath, verify, targetDir, opId)
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val errorsList = parseErrors(res?.optJSONArray("fallidos"))
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Subida de archivo completada",
@@ -569,6 +613,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         foldersCount = 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
                         elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = _state.value.config.folder,
                         errors = errorsList,
                     )
@@ -590,8 +635,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             cleanupAfter = { _ ->
                 stagedFile?.parentFile?.let { if (it.exists()) it.deleteRecursively() }
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val errorsList = parseErrors(res?.optJSONArray("fallidos"))
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Subida de archivo completada",
@@ -599,6 +645,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         foldersCount = 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
                         elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = _state.value.config.folder,
                         errors = errorsList,
                     )
@@ -615,8 +662,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             launchCall = { opId ->
                 bridge.uploadFolder(sessionId, localPath, verify, targetDir, opId)
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val errorsList = parseErrors(res?.optJSONArray("fallidos"))
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Subida de carpeta completada",
@@ -624,6 +672,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         foldersCount = res?.optInt("carpetas") ?: 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
                         elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = _state.value.config.folder,
                         errors = errorsList,
                     )
@@ -648,8 +697,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             cleanupAfter = { _ ->
                 stagingRoot?.let { if (it.exists()) it.deleteRecursively() }
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val errorsList = parseErrors(res?.optJSONArray("fallidos"))
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Subida de carpeta completada",
@@ -657,6 +707,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         foldersCount = res?.optInt("carpetas") ?: 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
                         elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = _state.value.config.folder,
                         errors = errorsList,
                     )
@@ -689,8 +740,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             launchCall = { opId ->
                 bridge.downloadSelection(sessionId, jsonStr, outputDir, opId)
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val errorsList = parseErrors(res?.optJSONArray("errores"))
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Descarga finalizada",
@@ -698,6 +750,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         foldersCount = res?.optInt("dirs") ?: 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
                         elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = outputDir.ifBlank { "Descargas/Mixcoara/Descifrados" },
                         errors = errorsList,
                     )
@@ -718,8 +771,9 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             launchCall = { opId ->
                 bridge.downloadAll(sessionId, outputDir, opId)
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val errorsList = parseErrors(res?.optJSONArray("errores"))
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Bóveda completa restaurada",
@@ -727,6 +781,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         foldersCount = res?.optInt("dirs") ?: 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
                         elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = outputDir.ifBlank { "Descargas/Mixcoara/Descifrados" },
                         errors = errorsList,
                     )
@@ -742,15 +797,17 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             launchCall = { opId ->
                 bridge.encryptLocal(sessionId, sourcePath, targetPath, opId)
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val dest = res?.optString("destino").orEmpty()
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Archivo cifrado localmente",
                         filesCount = 1,
                         foldersCount = 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
-                        elapsedSec = 0.0,
+                        elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = dest,
                     )
                 _state.update { it.copy(transferSummary = summary) }
@@ -765,15 +822,17 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             launchCall = { opId ->
                 bridge.decryptLocal(sessionId, sourcePath, targetPath, opId)
             },
-            onCompleted = { res ->
+            onCompleted = { res, stagingSec ->
                 val dest = res?.optString("destino").orEmpty()
+                val pyPrep = res?.optDouble("segundos_preparacion", 0.0) ?: 0.0
                 val summary =
                     TransferSummary(
                         title = "Archivo descifrado localmente",
                         filesCount = 1,
                         foldersCount = 0,
                         bytesCount = res?.optLong("bytes") ?: 0L,
-                        elapsedSec = 0.0,
+                        elapsedSec = res?.optDouble("segundos", 0.0) ?: 0.0,
+                        prepElapsedSec = stagingSec + pyPrep,
                         destination = dest,
                     )
                 _state.update { it.copy(transferSummary = summary) }
@@ -847,7 +906,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
     fun tryBiometricUnlock(onReadyToUnlock: (passphrase: String) -> Unit) {
         val savedPass = store.loadBiometricPassphrase()
         if (savedPass.isNullOrBlank()) {
-            _state.update { it.copy(error = "No hay frase guardada con biometría.") }
+            _state.update { it.copy(error = "No hay frase guardada con biometría o bloqueo del dispositivo.") }
             return
         }
         onReadyToUnlock(savedPass)
@@ -916,7 +975,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                 activeProgress =
                     it.activeProgress?.copy(
                         phase = "Preparando archivo",
-                        state = "copiando",
+                        state = "copiando a temporal",
                         currentItem = fileName,
                     ),
             )
@@ -952,7 +1011,7 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                         activeProgress =
                             it.activeProgress?.copy(
                                 phase = "Preparando carpeta",
-                                state = "copiando",
+                                state = "copiando a temporal",
                                 currentItem = name,
                             ),
                     )

@@ -1,5 +1,6 @@
 package com.mixcoara.app
 
+import com.mixcoara.app.ui.theme.MixcoaraThemeId
 import org.json.JSONObject
 
 data class VaultConfig(
@@ -33,6 +34,8 @@ data class TransferProgress(
     val bytesTotal: Long = 0L,
     val speedBytesPerSec: Double = 0.0,
     val elapsedSec: Double = 0.0,
+    val prepElapsedSec: Double = 0.0,
+    val uploadElapsedSec: Double = 0.0,
     val etaSec: Double? = null,
     val isCancelled: Boolean = false,
     val isFinished: Boolean = false,
@@ -46,6 +49,7 @@ data class TransferSummary(
     val foldersCount: Int,
     val bytesCount: Long,
     val elapsedSec: Double,
+    val prepElapsedSec: Double = 0.0,
     val destination: String,
     val errors: List<String> = emptyList(),
 )
@@ -72,4 +76,6 @@ data class MixcoaraUiState(
     val logText: String = "",
     val biometricEnabled: Boolean = false,
     val vaultContentVisible: Boolean = false,
+    val themeId: MixcoaraThemeId = MixcoaraThemeId.APP,
 )
+
