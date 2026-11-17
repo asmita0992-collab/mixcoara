@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mixcoara</string>
+    <style name="Theme.Mixcoara" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#0B1021</item>
+        <item name="android:navigationBarColor">#0B1021</item>
+        <item name="android:windowBackground">#0B1021</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>
