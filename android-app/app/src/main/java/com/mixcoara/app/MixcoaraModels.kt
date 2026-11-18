@@ -76,6 +76,5 @@ data class MixcoaraUiState(
     val logText: String = "",
     val biometricEnabled: Boolean = false,
     val vaultContentVisible: Boolean = false,
-    val themeId: MixcoaraThemeId = MixcoaraThemeId.APP,
+    val themeId: MixcoaraThemeId = MixcoaraThemeId.MIXCO,
 )
-

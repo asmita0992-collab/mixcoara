@@ -21,7 +21,7 @@ class SecureConfigStore(context: Context) {
     }
 
     fun loadTheme(): MixcoaraThemeId =
-        MixcoaraThemeId.fromId(preferences.getString("theme_id", MixcoaraThemeId.APP.id))
+        MixcoaraThemeId.fromId(preferences.getString("theme_id", MixcoaraThemeId.MIXCO.id))
 
     fun saveBiometricPassphrase(passphrase: String) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -125,4 +125,3 @@ class SecureConfigStore(context: Context) {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
 }
-
