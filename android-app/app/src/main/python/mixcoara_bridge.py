@@ -195,7 +195,8 @@ def abrir_boveda(
     try:
         _configurar_rutas(private_dir, download_dir)
         dav = _cliente(config_json)
-        _validar_acceso(dav)\n        llaves = nube.abrir_boveda_nube(dav, frase=frase)
+        _validar_acceso(dav)  
+        llaves = nube.abrir_boveda_nube(dav, frase=frase)
         session_id = str(uuid.uuid4())
         with _lock:
             _sesiones.clear()
