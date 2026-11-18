@@ -2,14 +2,10 @@
 """
 mixcoara_info.py - Versión, descripción de la app y registro de cambios.
 
-Para publicar una versión nueva: edita registro_cambios.txt (o sube VERSION y agrega un bloque ARRIBA de CAMBIOS_BASE).
+Para publicar una versión nueva: sube VERSION y agrega un bloque ARRIBA de CAMBIOS.
 """
 
-from pathlib import Path
-from typing import List, Tuple
-import mixcoara_config as cfgm
-
-VERSION = "2.5.0"
+VERSION = "1.7.0"
 
 DESCRIPCION = [
     ("¿Qué es Mixcoara?",
@@ -55,35 +51,37 @@ DESCRIPCION = [
     ("Seguridad",
      "• Cambiar frase: reenvuelve la misma llave maestra, sin recifrar archivos.\n"
      "• Nueva clave de recuperación: genera otra y la anterior deja de servir en el archivo actual.\n"
-     "• Acceso por biometría o credencial del dispositivo: guarda la frase en el Keystore de Android "
-     "y la libera con tu huella, rostro, PIN, patrón, NIP o contraseña del teléfono."),
+     "• Acceso biométrico: guarda la frase en el Keystore de Android y la libera solo con tu huella "
+     "o rostro. Si cambias la frase, se actualiza sola."),
 
-    ("Segundo plano, avisos y PiP",
-     "Para transferencias pesadas, la app pide ignorar la optimización de batería y permiso de "
-     "notificaciones. Mientras trabaja mantiene un WakeLock/WifiLock y un servicio en primer plano, "
-     "permitiendo además ventana flotante de Pantalla en Pantalla (PiP) automática o manual."),
+    ("Segundo plano y avisos",
+     "Para transferencias pesadas, la app pide ignorar la optimización de batería, permiso de "
+     "notificaciones y permiso de superposición. Mientras trabaja muestra una notificación fija "
+     "(servicio en primer plano) y, si estabas en otra app, te avisa cuando la tarea termina o falla. "
+     "La ventana de imagen en imagen (PiP) no está disponible porque requiere código nativo."),
 
-    ("Progreso y tiempos separados",
-     "Las acciones previas a la subida (copia temporal y cifrado AES-GCM/SIV) tienen su propio "
-     "contador de tiempo independiente para que el tiempo de subida mida exclusivamente la "
-     "transferencia a la nube. En la bitácora ambos datos aparecen desglosados con claridad."),
+    ("Progreso y avisos de inactividad",
+     "La barra mide los bytes transferidos de la operación en curso. El cifrado y el descifrado no "
+     "cuentan como inactividad; el aviso «sin avance» aparece si pasan 45 segundos sin movimiento "
+     "en las demás fases."),
 
     ("Temporales y limpieza",
      "Los temporales viven en Descargas/Mixcoara/.temporales (Android los borra de la caché privada "
      "durante tareas largas). Se eliminan al terminar una tarea, tanto si salió bien como si falló o "
-     "se canceló, y también al abrir la app."),
+     "se canceló, y también al abrir la app. En Ajustes puedes limpiarlos manualmente."),
 
     ("Registro de actividad",
-     "Guarda subidas y descargas correctas (con tiempos separados de preparación/cifrado y subida "
-     "exclusiva) y, con todo detalle, los errores: tipo de excepción, traceback, código HTTP del "
-     "servidor, rutas, tamaños y espacio libre. Nunca guarda contraseñas ni frases."),
+     "Guarda subidas y descargas correctas y, con todo detalle, los errores: tipo de excepción, "
+     "traceback, código HTTP del servidor, rutas, tamaños y espacio libre. Nunca guarda contraseñas "
+     "ni frases. Se puede ver en la app, exportar a Descargas/Mixcoara/registros y borrar. "
+     "Tiene rotación automática (hasta unos 5 MB)."),
 
     ("Dónde se guarda cada cosa",
      "• Configuración (cifrada): ~/config_mixcoara/privado/\n"
      "• Registro: ~/config_mixcoara/privado/logs/\n"
-     "• Registro de cambios editable: Descargas/Mixcoara/registro_cambios.txt\n"
      "• Temporales, cifrados locales y descifrados: Descargas/Mixcoara/\n"
-     "• Paquete de certificados TLS: Descargas/Mixcoara/.datos/"),
+     "• Paquete de certificados TLS: Descargas/Mixcoara/.datos/ (copia de los certificados "
+     "raíz públicos; si no se puede escribir ahí, se usa la carpeta privada)"),
 
     ("Límites conocidos",
      "• No sincroniza ni compara carpetas: sube y baja bajo demanda.\n"
@@ -94,48 +92,7 @@ DESCRIPCION = [
 ]
 
 # El más reciente primero. Formato: (versión, fecha, [cambios])
-# Sincronizado con registro_cambios.txt
-CAMBIOS_BASE = [
-    ("2.5.0", "2026-11-17", [
-        "Incorporación de los 8 temas visuales oficiales (Mixcoara, Mixco noche, Mixco día, Mixco oscuridad, Mixco esmeralda, Mixco ámbar, Mixco violeta y Mixco grafito).",
-        "Soporte completo para Pantalla en Pantalla (PiP) automática y manual durante subidas y descargas.",
-        "Corrección de permisos de notificaciones (Android 13+), exención de batería y bloqueo de suspensión (WakeLock/WifiLock) para transferencias continuas en segundo plano.",
-        "Separación del cronómetro de preparación/cifrado y del cronómetro exclusivo de subida a la nube, con reporte detallado en la bitácora.",
-        "Desbloqueo mediante biometría (huella o rostro) o credencial del dispositivo (PIN, patrón, NIP o contraseña).",
-        "Lectura dinámica del historial de versiones desde el archivo de texto editable registro_cambios.txt.",
-    ]),
-    ("2.4.0", "2026-11-12", [
-        "Ícono oficial sin recreaciones vectoriales y logotipo oficial en Acerca de; navegación inferior uniforme.",
-        "Inicio disponible sin exigir permisos previos; elección directa entre WebDAV y bóvedas locales.",
-        "Importación local de archivo o carpeta mediante diálogos, con selectores y ruta manual; pantalla local despejada.",
-        "Visibilidad de archivos locales oculta por defecto y control para mostrar u ocultar.",
-        "Biometría opcional ofrecida al desbloquear por primera vez, con cambios posteriores desde Configuración.",
-        "Metadatos locales cifrados en .mixcoara/metadata.enc; migración de bóvedas existentes tras abrirlas con su contraseña.",
-        "Registro de versiones revisado; correcciones de textos de seguridad y compatibilidad.",
-    ]),
-    ("2.2.1", "2026-11-08", [
-        "Bóvedas locales independientes con creación, apertura, contraseña y recuperación propias; acceso desde Inicio sin WebDAV.",
-        "Importación cifrada de directorios, explorador local y exportación de copias descifradas; conservación de archivos originales.",
-        "Protección biométrica por bóveda con llaves de Android Keystore que requieren autenticación.",
-        "Activación de huella con la contraseña ya verificada, sin inventar ni escribir una frase distinta.",
-        "Compatibilidad conservada para archivos .mixcoara de la herramienta anterior.",
-    ]),
-    ("2.2.0", "2026-11-08", [
-        "Restauración del acceso a Acerca de y Registro de cambios desde la navegación principal.",
-        "Restauración de mostrar/ocultar contenido; nombres y selección no se componen mientras la vista está oculta.",
-        "Vista de bóveda oculta por defecto y al bloquear o cambiar de conexión.",
-        "Ícono de Mixcoara en tarjetas y cabecera; eliminación de imágenes decorativas genéricas y de la marca duplicada en tarjetas.",
-        "Versión informativa tomada de BuildConfig, con versión de compilación 2.2.0.",
-    ]),
-    ("2.1.0", "", [
-        "Selección nativa de carpetas con OpenDocumentTree y conservación de la ruta manual.",
-        "Preparación de selecciones nativas en segundo plano y temporales por operación.",
-        "Ajustes de progreso por etapas, cancelación, limpieza y tratamiento de errores nulos.",
-    ]),
-    ("2.0.0", "", [
-        "Migración de la interfaz a Android nativo con Jetpack Compose y puente al núcleo Python mediante Chaquopy.",
-        "Continuidad de la bóveda WebDAV, cifrado local, seguridad y bitácora.",
-    ]),
+CAMBIOS = [
     ("1.7.0", "2026-11-05", [
         "La configuración pasó a la carpeta privada ~/config_mixcoara/privado/ y se cifra con una "
         "clave guardada en el Keystore de Android. La copia vieja de Descargas se migra y se borra.",
@@ -170,64 +127,6 @@ CAMBIOS_BASE = [
         "y clave de recuperación.",
     ]),
 ]
-
-
-def parsear_registro_cambios_txt(texto: str) -> List[Tuple[str, str, List[str]]]:
-    entradas: List[Tuple[str, str, List[str]]] = []
-    ver_actual = None
-    fecha_actual = ""
-    cambios_actuales: List[str] = []
-
-    def guardar():
-        nonlocal ver_actual, fecha_actual, cambios_actuales
-        if ver_actual and cambios_actuales:
-            entradas.append((ver_actual, fecha_actual, list(cambios_actuales)))
-        ver_actual = None
-        fecha_actual = ""
-        cambios_actuales = []
-
-    for linea_cruda in texto.splitlines():
-        linea = linea_cruda.strip()
-        if not linea or linea.startswith("#"):
-            continue
-        if linea.startswith("[") and linea.endswith("]"):
-            guardar()
-            cab = linea[1:-1]
-            partes = cab.split("|", 1)
-            ver_actual = partes[0].strip().lstrip("vV")
-            fecha_actual = partes[1].strip() if len(partes) > 1 else ""
-        elif linea[0] in ("-", "•", "*"):
-            item = linea[1:].strip()
-            if item:
-                if ver_actual is None:
-                    ver_actual = VERSION
-                cambios_actuales.append(item)
-        elif ver_actual is not None:
-            if not cambios_actuales:
-                cambios_actuales.append(linea)
-            else:
-                cambios_actuales[-1] = f"{cambios_actuales[-1]} {linea}"
-    guardar()
-    return entradas
-
-
-def cargar_cambios() -> List[Tuple[str, str, List[str]]]:
-    candidatos = [
-        cfgm.dir_descargas_mixcoara() / "registro_cambios.txt",
-        Path(__file__).resolve().parent / "registro_cambios.txt",
-    ]
-    for ruta in candidatos:
-        try:
-            if ruta.is_file():
-                leidos = parsear_registro_cambios_txt(ruta.read_text(encoding="utf-8"))
-                if leidos:
-                    return leidos
-        except Exception:
-            pass
-    return CAMBIOS_BASE
-
-
-CAMBIOS = cargar_cambios()
 
 
 def texto_descripcion() -> str:

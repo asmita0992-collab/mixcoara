@@ -128,7 +128,11 @@ def _validar_acceso(dav: nube.ClienteWebDAV) -> None:
 def self_test(private_dir: str, download_dir: str) -> str:
     """Prueba AES-GCM, AES-SIV, scrypt/HKDF y un archivo con formato local."""
     try:
-        _configurar_rutas(private_dir, download_dir)
+        # El diagnóstico no necesita escribir en Descargas. Así puede ejecutarse
+        # antes de que el usuario decida entre Local y WebDAV o autorice archivos.
+        os.environ["MIXCOARA_PRIVATE_DIR"] = private_dir
+        os.environ["MIXCOARA_DOWNLOAD_DIR"] = download_dir
+        Path(private_dir).mkdir(parents=True, exist_ok=True)
         arch, llaves, recuperacion = claves.crear_boveda(
             "frase de compatibilidad mixcoara"
         )
@@ -195,7 +199,7 @@ def abrir_boveda(
     try:
         _configurar_rutas(private_dir, download_dir)
         dav = _cliente(config_json)
-        _validar_acceso(dav)  
+        _validar_acceso(dav)
         llaves = nube.abrir_boveda_nube(dav, frase=frase)
         session_id = str(uuid.uuid4())
         with _lock:
@@ -395,19 +399,11 @@ def cifrar_local(session_id: str, source_path: str, target_path: str, op_id: str
         destino = Path(target_path)
 
     def tarea(prog, _op_tmp_dir: Path):
-        t0 = time.monotonic()
         prog.iniciar("Cifrando archivo local", 1, 0, origen.stat().st_size)
         prog.poner("cifrando", origen.name)
         resultado = nube.cifrar_archivo_local(origen, llaves.gcm, destino)
-        dt = time.monotonic() - t0
-        prog.sumar_preparacion(dt)
         prog.archivo_listo()
-        return {
-            "destino": str(resultado),
-            "bytes": destino.stat().st_size,
-            "segundos_preparacion": round(dt, 2),
-            "segundos": round(dt, 2),
-        }
+        return {"destino": str(resultado), "bytes": destino.stat().st_size}
 
     return _ejecutar_en_fondo(op_id, tarea)
 
@@ -428,19 +424,11 @@ def descifrar_local(session_id: str, source_path: str, target_path: str, op_id: 
         destino = Path(target_path)
 
     def tarea(prog, _op_tmp_dir: Path):
-        t0 = time.monotonic()
         prog.iniciar("Descifrando archivo local", 1, 0, origen.stat().st_size)
         prog.poner("descifrando", origen.name)
         resultado = nube.descifrar_archivo_local(origen, llaves.gcm, destino)
-        dt = time.monotonic() - t0
-        prog.sumar_preparacion(dt)
         prog.archivo_listo()
-        return {
-            "destino": str(resultado),
-            "bytes": destino.stat().st_size,
-            "segundos_preparacion": round(dt, 2),
-            "segundos": round(dt, 2),
-        }
+        return {"destino": str(resultado), "bytes": destino.stat().st_size}
 
     return _ejecutar_en_fondo(op_id, tarea)
 
@@ -483,8 +471,7 @@ def limpiar_registro() -> str:
 
 def exportar_registro() -> str:
     try:
-        salida = registro.exportar("2.5.0")
+        salida = registro.exportar("2.0.0")
         return _respuesta(True, "logs_exported", data={"export_path": str(salida)})
     except Exception as ex:
         return _respuesta(False, "export_logs_failed", str(ex))
-

@@ -17,30 +17,30 @@ enum class MixcoaraThemeId(
         id = "mixco",
         title = "Mixcoara",
         description = "Noche profunda, turquesa nube y oro sol",
-        previewBg = Color(0xFF0B1021), // Deep Night
-        previewAccent = Color(0xFF00E5FF), // Turquoise Cloud
+        previewBg = Color(0xFF0B1021),
+        previewAccent = Color(0xFF00E5FF),
     ),
     BLUEPRINT(
         id = "blueprint",
         title = "Mixco noche",
         description = "Azul noche y oro sol",
-        previewBg = Color(0xFF151E32), // Surface
-        previewAccent = Color(0xFFFFD700), // Sun Gold
+        previewBg = Color(0xFF151E32),
+        previewAccent = Color(0xFFFFD700),
     ),
     LIGHT(
         id = "light",
         title = "Mixco día",
         description = "Claro · lectura diurna con identidad Mixcoara",
-        previewBg = Color(0xFFEDF4F7), // Fondo claro mantenido para legibilidad
-        previewAccent = Color(0xFF00B4D8), // Turquesa ajustado para contraste en modo claro
+        previewBg = Color(0xFFEDF4F7),
+        previewAccent = Color(0xFF00B4D8),
         isLight = true,
     ),
     DARK(
         id = "dark",
         title = "Mixco oscuridad",
         description = "Oscuro · turquesa nube, noche y oro",
-        previewBg = Color(0xFF0B1021), // Deep Night
-        previewAccent = Color(0xFF00E5FF), // Turquoise Cloud
+        previewBg = Color(0xFF0B1021),
+        previewAccent = Color(0xFF00E5FF),
     ),
     EMERALD(
         id = "emerald",
@@ -73,6 +73,6 @@ enum class MixcoaraThemeId(
 
     companion object {
         fun fromId(value: String?): MixcoaraThemeId =
-            entries.firstOrNull { it.id == value } ?: MIXCO // Cambiado de APP a MIXCO ya que APP no estaba definido en el enum
+            entries.firstOrNull { it.id == value } ?: MIXCO
     }
 }

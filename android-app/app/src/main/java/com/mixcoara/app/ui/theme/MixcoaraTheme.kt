@@ -1,6 +1,7 @@
 package com.mixcoara.app.ui.theme
 
 import android.app.Activity
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -15,45 +16,43 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
-// Esquema para Mixcoara (MIXCO) - Noche profunda, turquesa nube y oro sol
 private val MixcoScheme =
     darkColorScheme(
-        primary = Color(0xFF00E5FF),       // Turquoise Cloud
-        onPrimary = Color(0xFF0B1021),     // Deep Night
-        primaryContainer = Color(0xFF151E32), // Surface
+        primary = Color(0xFF00E5FF),
+        onPrimary = Color(0xFF0B1021),
+        primaryContainer = Color(0xFF151E32),
         onPrimaryContainer = Color(0xFF00E5FF),
-        secondary = Color(0xFFFFD700),      // Sun Gold
+        secondary = Color(0xFFFFD700),
         onSecondary = Color(0xFF0B1021),
         secondaryContainer = Color(0xFF151E32),
         onSecondaryContainer = Color(0xFFFFD700),
         tertiary = Color(0xFF00E5FF),
         onTertiary = Color(0xFF0B1021),
-        background = Color(0xFF0B1021),     // Deep Night
-        onBackground = Color(0xFFFFFFFF),   // White
-        surface = Color(0xFF151E32),        // Surface
+        background = Color(0xFF0B1021),
+        onBackground = Color(0xFFFFFFFF),
+        surface = Color(0xFF151E32),
         onSurface = Color(0xFFFFFFFF),
         surfaceVariant = Color(0xFF0B1021),
-        onSurfaceVariant = Color(0xFFA0A0A0), // Gray
+        onSurfaceVariant = Color(0xFFA0A0A0),
         outline = Color(0xFF151E32),
         error = Color(0xFFFFB4AB),
     )
 
-// Esquema para Mixco noche (BLUEPRINT) - Azul noche y oro sol
 private val BlueprintScheme =
     darkColorScheme(
-        primary = Color(0xFFFFD700),       // Sun Gold
-        onPrimary = Color(0xFF151E32),     // Surface
+        primary = Color(0xFFFFD700),
+        onPrimary = Color(0xFF151E32),
         primaryContainer = Color(0xFF151E32),
         onPrimaryContainer = Color(0xFFFFD700),
-        secondary = Color(0xFF00E5FF),     // Turquoise Cloud
+        secondary = Color(0xFF00E5FF),
         onSecondary = Color(0xFF151E32),
         secondaryContainer = Color(0xFF151E32),
         onSecondaryContainer = Color(0xFF00E5FF),
         tertiary = Color(0xFFFFD700),
         onTertiary = Color(0xFF151E32),
-        background = Color(0xFF151E32),    // Surface
+        background = Color(0xFF151E32),
         onBackground = Color(0xFFFFFFFF),
-        surface = Color(0xFF0B1021),       // Deep Night
+        surface = Color(0xFF0B1021),
         onSurface = Color(0xFFFFFFFF),
         surfaceVariant = Color(0xFF151E32),
         onSurfaceVariant = Color(0xFFA0A0A0),
@@ -61,20 +60,19 @@ private val BlueprintScheme =
         error = Color(0xFFFFB4AB),
     )
 
-// Esquema para Mixco día (LIGHT) - Claro · lectura diurna con identidad Mixcoara
 private val LightScheme =
     lightColorScheme(
-        primary = Color(0xFF00B4D8),       // Turquesa ajustado para contraste
+        primary = Color(0xFF00B4D8),
         onPrimary = Color(0xFFFFFFFF),
         primaryContainer = Color(0xFFDEF2F2),
         onPrimaryContainer = Color(0xFF0B1021),
-        secondary = Color(0xFFFFD700),      // Sun Gold
+        secondary = Color(0xFFFFD700),
         onSecondary = Color(0xFF0B1021),
         secondaryContainer = Color(0xFFD2E9ED),
         onSecondaryContainer = Color(0xFF151E32),
         tertiary = Color(0xFF00B4D8),
         onTertiary = Color(0xFFFFFFFF),
-        background = Color(0xFFEDF4F7),    // Fondo claro
+        background = Color(0xFFEDF4F7),
         onBackground = Color(0xFF151E32),
         surface = Color(0xFFFFFFFF),
         onSurface = Color(0xFF102D3C),
@@ -84,22 +82,21 @@ private val LightScheme =
         error = Color(0xFFB3261E),
     )
 
-// Esquema para Mixco oscuridad (DARK) - Oscuro · turquesa nube, noche y oro
 private val DarkScheme =
     darkColorScheme(
-        primary = Color(0xFF00E5FF),       // Turquoise Cloud
-        onPrimary = Color(0xFF0B1021),     // Deep Night
-        primaryContainer = Color(0xFF151E32), // Surface
+        primary = Color(0xFF00E5FF),
+        onPrimary = Color(0xFF0B1021),
+        primaryContainer = Color(0xFF151E32),
         onPrimaryContainer = Color(0xFF00E5FF),
-        secondary = Color(0xFFFFD700),      // Sun Gold
+        secondary = Color(0xFFFFD700),
         onSecondary = Color(0xFF0B1021),
         secondaryContainer = Color(0xFF151E32),
         onSecondaryContainer = Color(0xFFFFD700),
         tertiary = Color(0xFF00E5FF),
         onTertiary = Color(0xFF0B1021),
-        background = Color(0xFF0B1021),     // Deep Night
+        background = Color(0xFF0B1021),
         onBackground = Color(0xFFFFFFFF),
-        surface = Color(0xFF151E32),        // Surface
+        surface = Color(0xFF151E32),
         onSurface = Color(0xFFFFFFFF),
         surfaceVariant = Color(0xFF0B1021),
         onSurfaceVariant = Color(0xFFA0A0A0),
@@ -207,12 +204,13 @@ private fun schemeFor(themeId: MixcoaraThemeId): ColorScheme =
         MixcoaraThemeId.MONOCHROME -> MonochromeScheme
     }
 
+// Tipografía de la 2.4.0: encabezados con serif, cuerpo sans-serif.
 private val MixcoaraTypography =
     Typography().let { base ->
         base.copy(
-            displaySmall = base.displaySmall.copy(fontFamily = FontFamily.SansSerif),
-            headlineSmall = base.headlineSmall.copy(fontFamily = FontFamily.SansSerif),
-            titleLarge = base.titleLarge.copy(fontFamily = FontFamily.SansSerif),
+            displaySmall = base.displaySmall.copy(fontFamily = FontFamily.Serif),
+            headlineSmall = base.headlineSmall.copy(fontFamily = FontFamily.Serif),
+            titleLarge = base.titleLarge.copy(fontFamily = FontFamily.Serif),
             bodyLarge = base.bodyLarge.copy(fontFamily = FontFamily.SansSerif),
             bodyMedium = base.bodyMedium.copy(fontFamily = FontFamily.SansSerif),
             labelLarge = base.labelLarge.copy(fontFamily = FontFamily.SansSerif),
@@ -241,8 +239,8 @@ fun MixcoaraTheme(
         colorScheme = colorScheme,
         typography = MixcoaraTypography,
         shapes = MaterialTheme.shapes.copy(
-            small = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-            medium = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            small = RoundedCornerShape(8.dp),
+            medium = RoundedCornerShape(12.dp),
         ),
         content = content,
     )

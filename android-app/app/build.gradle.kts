@@ -17,9 +17,9 @@ if (versionPropsFile.exists()) {
     FileInputStream(versionPropsFile).use { versionProps.load(it) }
 } else {
     versionProps["MAJOR"] = "2"
-    versionProps["MINOR"] = "5"
+    versionProps["MINOR"] = "6"
     versionProps["PATCH"] = "0"
-    versionProps["BUILD"] = "25"
+    versionProps["BUILD"] = "26"
     FileOutputStream(versionPropsFile).use { versionProps.store(it, "Mixcoara Version Properties") }
 }
 

@@ -16,46 +16,24 @@ class SecureConfigStore(context: Context) {
     private val preferences =
         context.getSharedPreferences("mixcoara_secure_config", Context.MODE_PRIVATE)
 
-    fun saveTheme(themeId: MixcoaraThemeId) {
-        preferences.edit().putString("theme_id", themeId.id).apply()
-    }
-
-    fun loadTheme(): MixcoaraThemeId =
-        MixcoaraThemeId.fromId(preferences.getString("theme_id", MixcoaraThemeId.MIXCO.id))
-
-    fun saveBiometricPassphrase(passphrase: String) {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-        val encrypted = cipher.doFinal(passphrase.toByteArray(Charsets.UTF_8))
-        preferences
-            .edit()
-            .putString("bio_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString("bio_payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
-            .apply()
-    }
-
-    fun loadBiometricPassphrase(): String? {
-        val iv = preferences.getString("bio_iv", null) ?: return null
-        val payload = preferences.getString("bio_payload", null) ?: return null
-        return runCatching {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                getOrCreateKey(),
-                GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)),
-            )
-            cipher
-                .doFinal(Base64.decode(payload, Base64.NO_WRAP))
-                .toString(Charsets.UTF_8)
-        }.getOrNull()
-    }
-
-    fun clearBiometricPassphrase() {
+    /**
+     * Borra las preferencias que usaba una versión anterior de la aplicación
+     * y que ya no significan nada.
+     */
+    fun limpiarFormatoAntiguo() {
         preferences.edit().remove("bio_iv").remove("bio_payload").apply()
     }
 
-    fun hasBiometricPassphrase(): Boolean =
-        preferences.contains("bio_iv") && preferences.contains("bio_payload")
+    /**
+     * Código de versión con el que se grabó por última vez el estado persistente.
+     * Sirve para detectar una actualización de la aplicación y descartar lo que
+     * quedó de la versión anterior.
+     */
+    fun savedVersionCode(): Int = preferences.getInt("version_code", 0)
+
+    fun saveVersionCode(code: Int) {
+        preferences.edit().putInt("version_code", code).apply()
+    }
 
     fun save(config: VaultConfig) {
         val plain =
@@ -101,6 +79,13 @@ class SecureConfigStore(context: Context) {
             }
             .getOrNull()
     }
+
+    fun saveTheme(themeId: MixcoaraThemeId) {
+        preferences.edit().putString("theme_id", themeId.id).apply()
+    }
+
+    fun loadTheme(): MixcoaraThemeId =
+        MixcoaraThemeId.fromId(preferences.getString("theme_id", MixcoaraThemeId.MIXCO.id))
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

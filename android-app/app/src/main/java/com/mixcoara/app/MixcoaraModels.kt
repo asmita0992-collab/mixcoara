@@ -34,8 +34,6 @@ data class TransferProgress(
     val bytesTotal: Long = 0L,
     val speedBytesPerSec: Double = 0.0,
     val elapsedSec: Double = 0.0,
-    val prepElapsedSec: Double = 0.0,
-    val uploadElapsedSec: Double = 0.0,
     val etaSec: Double? = null,
     val isCancelled: Boolean = false,
     val isFinished: Boolean = false,
@@ -49,12 +47,11 @@ data class TransferSummary(
     val foldersCount: Int,
     val bytesCount: Long,
     val elapsedSec: Double,
-    val prepElapsedSec: Double = 0.0,
     val destination: String,
     val errors: List<String> = emptyList(),
 )
 
-enum class AppTab { EXPLORER, LOCAL_VAULT, SECURITY, LOGS, ABOUT }
+enum class AppTab { EXPLORER, LOCAL_VAULT, CONFIGURACION, LOGS, ABOUT }
 enum class AppScreen { CHECKING, CONNECTION, UNLOCK, CREATE, RECOVERY_KEY, VAULT }
 
 data class MixcoaraUiState(

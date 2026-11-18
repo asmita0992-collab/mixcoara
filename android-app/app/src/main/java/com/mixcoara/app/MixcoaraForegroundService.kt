@@ -14,11 +14,9 @@ import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
-class MixcoaraForegroundService : Service {
+class MixcoaraForegroundService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
-
-    constructor() : super()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -260,4 +258,3 @@ class MixcoaraForegroundService : Service {
         }
     }
 }
-

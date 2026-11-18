@@ -158,14 +158,11 @@ def listar_carpeta(dav: ClienteWebDAV, llaves: Llaves,
         if not mn._nombre_seguro(nombre):
             return None, (nombre_cif, "nombre con caracteres peligrosos")
         tam = None
-        partes_count = 0
         for n, d, t in dav.listar_detalle(f"d/{uuid_hijo}"):
-            if (n == f"{uuid_hijo}.bin" or n.endswith(".part")) and not d:
-                tam = (tam or 0) + t
-                partes_count += 1
+            if n == f"{uuid_hijo}.bin" and not d:
+                tam = t
         if tam is not None:
-            sobrecarga = max(1, partes_count) * SOBRECARGA_GCM
-            return Entrada(nombre, False, uuid_hijo, max(0, tam - sobrecarga), uuid_dir), None
+            return Entrada(nombre, False, uuid_hijo, max(0, tam - SOBRECARGA_GCM), uuid_dir), None
         return Entrada(nombre, True, uuid_hijo, 0, uuid_dir), None
 
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -197,7 +194,6 @@ def _nombres_unicos(entradas: List[Entrada]) -> List[Entrada]:
 
 def planificar_entradas(dav: ClienteWebDAV, llaves: Llaves, entradas: List[Entrada],
                         prog: Progreso):
-    t0_plan = time.monotonic()
     prog.iniciar("Leyendo selección")
     dirs: List[Path] = []
     archivos: List[Tuple[str, Path, int]] = []
@@ -228,7 +224,6 @@ def planificar_entradas(dav: ClienteWebDAV, llaves: Llaves, entradas: List[Entra
         else:
             archivos.append((e.uuid, rel, e.tamano + SOBRECARGA_GCM))
         _actualizar()
-    prog.sumar_preparacion(time.monotonic() - t0_plan)
     prog.refrescar(True)
     return dirs, archivos, errores
 
@@ -256,87 +251,32 @@ def descargar_entradas(dav: ClienteWebDAV, llaves: Llaves, entradas: List[Entrad
 
     for uuid_h, rel, _tam in archivos:
         prog.poner("descargando", rel.name)
-        detalle_nodo = dav.listar_detalle(f"d/{uuid_h}")
-        partes = sorted([n for n, d, _t in detalle_nodo if n.endswith(".part") and not d])
-
-        if partes:
-            destino_arch = destino / rel
-            destino_arch.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with open(destino_arch, "wb") as f_out:
-                    error_descarga = False
-                    for parte in partes:
-                        prog.poner("descargando parte", f"{rel.name} ({parte})")
-                        tmp_parte = tmp_dir / f"desc_{uuid_h}_{parte}"
-                        if not dav.get_a_archivo(f"d/{uuid_h}/{parte}", tmp_parte, prog):
-                            causa = getattr(dav, "ultimo_error", "")
-                            res["errores"].append((str(rel), f"falló la descarga de {parte}" + (f" ({causa})" if causa else "")))
-                            error_descarga = True
-                            break
-                        t0_dec = time.monotonic()
-                        try:
-                            tam_parte = tmp_parte.stat().st_size
-                            with open(tmp_parte, "rb") as fi:
-                                nonce = fi.read(mn.GCM_NONCE_SIZE)
-                                fi.seek(tam_parte - mn.GCM_TAG_SIZE)
-                                tag = fi.read(mn.GCM_TAG_SIZE)
-                                fi.seek(mn.GCM_NONCE_SIZE)
-                                ct = fi.read(tam_parte - mn.GCM_NONCE_SIZE - mn.GCM_TAG_SIZE)
-                            indice = int(parte.split(".")[0])
-                            aad = f"{uuid_h}:{indice}".encode("utf-8")
-                            c = mn.AES.new(llaves.gcm, mn.AES.MODE_GCM, nonce=nonce)
-                            c.update(aad)
-                            claro = c.decrypt_and_verify(ct, tag)
-                            f_out.write(claro)
-                            prog.sumar_preparacion(time.monotonic() - t0_dec)
-                        except Exception as ex:
-                            res["errores"].append((str(rel), f"falló el descifrado de {parte} ({ex})"))
-                            error_descarga = True
-                            break
-                        finally:
-                            tmp_parte.unlink(missing_ok=True)
-                if error_descarga:
-                    destino_arch.unlink(missing_ok=True)
-                else:
+        tmp = tmp_dir / f"desc_{uuid_h}.bin"
+        try:
+            if not dav.get_a_archivo(f"d/{uuid_h}/{uuid_h}.bin", tmp, prog):
+                causa = getattr(dav, "ultimo_error", "")
+                res["errores"].append((str(rel), "no se pudo descargar" + (f" ({causa})" if causa else "")))
+                reg.error("descarga_archivo_fallo", archivo=rel, id=uuid_h, causa=causa)
+            else:
+                prog.poner("descifrando", rel.name)
+                if mn.descifrar_contenido(tmp, llaves.gcm, destino / rel, uuid_h):
                     res["archivos"] += 1
-                    reg.info("descarga_archivo_ok", archivo=rel, id=uuid_h, destino=destino_arch)
-            except Exception as ex:
-                destino_arch.unlink(missing_ok=True)
-                res["errores"].append((str(rel), f"error al restaurar multipart ({ex})"))
-            finally:
-                prog.archivo_listo()
-        else:
-            tmp = tmp_dir / f"desc_{uuid_h}.bin"
-            try:
-                if not dav.get_a_archivo(f"d/{uuid_h}/{uuid_h}.bin", tmp, prog):
-                    causa = getattr(dav, "ultimo_error", "")
-                    res["errores"].append((str(rel), "no se pudo descargar" + (f" ({causa})" if causa else "")))
-                    reg.error("descarga_archivo_fallo", archivo=rel, id=uuid_h, causa=causa)
+                    reg.info("descarga_archivo_ok", archivo=rel, id=uuid_h, destino=destino / rel)
                 else:
-                    t0_dec = time.monotonic()
-                    prog.poner("descifrando", rel.name)
-                    if mn.descifrar_contenido(tmp, llaves.gcm, destino / rel, uuid_h):
-                        res["archivos"] += 1
-                        reg.info("descarga_archivo_ok", archivo=rel, id=uuid_h, destino=destino / rel)
-                    else:
-                        causa = mn.ULTIMO_ERROR_CRIPTO or "validación GCM"
-                        res["errores"].append((str(rel), f"falló el descifrado ({causa})"))
-                        reg.error("descarga_descifrado_fallo", archivo=rel, id=uuid_h, causa=causa)
-                    prog.sumar_preparacion(time.monotonic() - t0_dec)
-            finally:
-                tmp.unlink(missing_ok=True)
-                prog.archivo_listo()
+                    causa = mn.ULTIMO_ERROR_CRIPTO or "validación GCM"
+                    res["errores"].append((str(rel), f"falló el descifrado ({causa})"))
+                    reg.error("descarga_descifrado_fallo", archivo=rel, id=uuid_h, causa=causa)
+        finally:
+            tmp.unlink(missing_ok=True)
+            prog.archivo_listo()
 
     prog.poner("", "")
     prog.refrescar(True)
     res["bytes"] = prog.bytes_hechos
     res["segundos"] = prog.transcurrido()
-    res["segundos_preparacion"] = round(prog.segundos_preparacion, 2)
     res["vel_media"] = prog.velocidad_media()
     reg.info("descarga_fin", archivos_ok=res["archivos"], carpetas=res["dirs"],
-             errores=len(res["errores"]), bytes=res["bytes"],
-             segundos_preparacion_descifrado=res["segundos_preparacion"],
-             segundos_descarga_exclusiva=round(res["segundos"], 2))
+             errores=len(res["errores"]), bytes=res["bytes"], segundos=round(res["segundos"], 1))
     return res
 
 
@@ -345,10 +285,8 @@ def descargar_todo(dav: ClienteWebDAV, llaves: Llaves, destino: Path,
                    tmp_dir: Optional[Path] = None) -> dict:
     """Restaura toda la bóveda leyendo la estructura en paralelo."""
     prog = prog or Progreso()
-    t0_read = time.monotonic()
     prog.iniciar("Leyendo bóveda")
     raiz, errores = listar_carpeta(dav, llaves, llaves.root_uuid)
-    prog.sumar_preparacion(time.monotonic() - t0_read)
     res = descargar_entradas(dav, llaves, raiz, destino, prog, tmp_dir=tmp_dir)
     res["errores"] = list(errores) + res["errores"]
     return res
