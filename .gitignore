@@ -1,1 +1,9 @@
+# Firma y credenciales (NO subir al repo)
+*.jks
+keystore.properties
+keystore-base64.txt
+
+# Build de Android
 android-app/app/build/
+android-app/build/
+.gradle/

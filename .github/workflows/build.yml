@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Generar APK de depuración
+    name: Generar APK firmado de release
     runs-on: ubuntu-24.04
     steps:
       - name: Obtener el código
@@ -38,8 +38,19 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Decodificar Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-app/app/mi-release.jks
+
+      - name: Crear keystore.properties
+        working-directory: android-app
+        run: |
+          echo "storeFile=mi-release.jks" > keystore.properties
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> keystore.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> keystore.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+
       - name: Incrementar versión
-        # Ejecutamos Gradle en la raíz del proyecto android-app donde está el gradlew/settings.gradle
         working-directory: android-app
         run: gradle --no-daemon incrementVersion
 
@@ -47,21 +58,17 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Ruta exacta del archivo dentro de la carpeta app
           git add android-app/app/version.properties
-          
-          # Agregamos [skip ci] para evitar que un push del bot dispare otro workflow por error
           git commit -m "Incrementar build automáticamente [skip ci]" || echo "No hay cambios para confirmar"
           git push
 
       - name: Compilar APK
         working-directory: android-app
-        run: gradle --no-daemon --max-workers=2 clean assembleDebug
+        run: gradle --no-daemon --max-workers=2 clean assembleRelease
 
       - name: Guardar el APK compilado
         uses: actions/upload-artifact@v4
         with:
           name: Archivos-APK-Generados
-          path: android-app/app/build/outputs/apk/**/*.apk
+          path: android-app/app/build/outputs/apk/release/*.apk
           if-no-files-found: error

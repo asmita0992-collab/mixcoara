@@ -31,10 +31,27 @@ val verBuild = (versionProps["BUILD"] as? String)?.toIntOrNull() ?: 21
 val currentVersionCode = verBuild
 val currentVersionName = "$verMajor.$verMinor.$verPatch"
 
+// Cargar keystore.properties (solo existirá en CI)
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    FileInputStream(keystorePropertiesFile).use { keystoreProperties.load(it) }
+}
+
 android {
-    // Identidad de publicación de Mixcoara 2.1.
     namespace = "com.tlahuis.mixcoara"
     compileSdk = 35
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "com.tlahuis.mixcoara"
@@ -65,6 +82,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
