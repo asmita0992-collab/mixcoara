@@ -16,6 +16,7 @@ import mixcoara_claves as claves
 import mixcoara_menu as menu
 import mixcoara_nube as nube
 import mixcoara_registro as registro
+import mixcoara_reporte as reporte
 import mixcoara_seguridad as seguridad
 
 _sesiones: Dict[str, Dict[str, Any]] = {}
@@ -388,6 +389,30 @@ def descargar_todo(session_id: str, output_dir: str, op_id: str) -> str:
     return _ejecutar_en_fondo(op_id, tarea)
 
 
+def borrar_seleccion(session_id: str, entries_json: str) -> str:
+    try:
+        sesion = _sesion(session_id)
+        dav = sesion["dav"]
+        llaves = sesion["llaves"]
+        fallidos = []
+        for d in json.loads(entries_json):
+            entrada = menu.Entrada(
+                nombre=d["name"],
+                es_dir=bool(d["is_directory"]),
+                uuid=d["id"],
+                tamano=int(d.get("size") or 0),
+                padre=d.get("parent_id") or llaves.root_uuid,
+            )
+            motivo = menu.borrar_entrada(dav, llaves, entrada)
+            if motivo:
+                fallidos.append({"item": entrada.nombre, "message": motivo})
+        if fallidos:
+            return _respuesta(False, "delete_partial", "Algunos elementos no se borraron.", data={"errors": fallidos})
+        return _respuesta(True, "delete_done", data={"errors": []})
+    except Exception as ex:
+        return _respuesta(False, "delete_failed", str(ex))
+
+
 def cifrar_local(session_id: str, source_path: str, target_path: str, op_id: str) -> str:
     sesion = _sesion(session_id)
     llaves = sesion["llaves"]
@@ -475,3 +500,28 @@ def exportar_registro() -> str:
         return _respuesta(True, "logs_exported", data={"export_path": str(salida)})
     except Exception as ex:
         return _respuesta(False, "export_logs_failed", str(ex))
+
+
+def exportar_reporte_boveda(session_id: str) -> str:
+    """Genera el reporte .txt de la bóveda y devuelve la ruta del archivo.
+
+    Formatos disponibles:
+      * "arbol"      → árbol visual + tabla UUID (por defecto).
+      * "tabla"      → solo tabla UUID\tTIPO\tTAMAÑO\tRUTA.
+      * "solo_rutas" → solo una ruta por línea.
+    """
+    try:
+        sesion = _sesion(session_id)
+        dav = sesion["dav"]
+        llaves = sesion["llaves"]
+        salida = reporte.volcar_reporte_completo(dav, llaves, formato="arbol")
+        return _respuesta(
+            True, "report_exported",
+            data={
+                "export_path": str(salida),
+                "format": "arbol",
+                "entries": 1,  # el conteo real está en el archivo
+            },
+        )
+    except Exception as ex:
+        return _respuesta(False, "export_report_failed", f"{type(ex).__name__}: {ex}")

@@ -20,6 +20,7 @@ import mixcoara_nube as mn
 import mixcoara_registro as reg
 from mixcoara_nube import (BarraConsola, ClienteWebDAV, ErrorBoveda, ErrorRed,
                            Llaves, Progreso, fmt_bytes)
+from Cryptodome.Cipher import AES
 
 SOBRECARGA_GCM = 28   # 12 de nonce + 16 de etiqueta
 
@@ -159,10 +160,10 @@ def listar_carpeta(dav: ClienteWebDAV, llaves: Llaves,
             return None, (nombre_cif, "nombre con caracteres peligrosos")
         tam = None
         for n, d, t in dav.listar_detalle(f"d/{uuid_hijo}"):
-            if n == f"{uuid_hijo}.bin" and not d:
-                tam = t
+            if (n == f"{uuid_hijo}.bin" or n.endswith(".part")) and not d:
+                tam = (tam or 0) + max(0, t - SOBRECARGA_GCM)
         if tam is not None:
-            return Entrada(nombre, False, uuid_hijo, max(0, tam - SOBRECARGA_GCM), uuid_dir), None
+            return Entrada(nombre, False, uuid_hijo, tam, uuid_dir), None
         return Entrada(nombre, True, uuid_hijo, 0, uuid_dir), None
 
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -228,6 +229,31 @@ def planificar_entradas(dav: ClienteWebDAV, llaves: Llaves, entradas: List[Entra
     return dirs, archivos, errores
 
 
+def _descargar_partes(dav: ClienteWebDAV, llaves: Llaves, uuid_h: str, partes: List[str],
+                      destino: Path, tmp_dir: Path, prog: Progreso) -> Optional[str]:
+    """Baja, descifra y une las partes .part de un archivo. Devuelve None o el motivo del error."""
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(destino, "wb") as f_out:
+            for parte in partes:
+                tmp_parte = tmp_dir / f"desc_{uuid_h}_{parte}"
+                try:
+                    if not dav.get_a_archivo(f"d/{uuid_h}/{parte}", tmp_parte, prog):
+                        raise ErrorBoveda(f"no se pudo descargar la parte {parte}")
+                    blob = tmp_parte.read_bytes()
+                    indice = int(parte.split(".")[0])
+                    c = AES.new(llaves.gcm, AES.MODE_GCM, nonce=blob[:mn.GCM_NONCE_SIZE])
+                    c.update(f"{uuid_h}:{indice}".encode("utf-8"))
+                    f_out.write(c.decrypt_and_verify(blob[mn.GCM_NONCE_SIZE:-mn.GCM_TAG_SIZE],
+                                                     blob[-mn.GCM_TAG_SIZE:]))
+                finally:
+                    tmp_parte.unlink(missing_ok=True)
+    except Exception as ex:
+        destino.unlink(missing_ok=True)
+        return f"falló la descarga o el descifrado ({ex})"
+    return None
+
+
 def descargar_entradas(dav: ClienteWebDAV, llaves: Llaves, entradas: List[Entrada],
                        destino: Path, prog: Optional[Progreso] = None,
                        tmp_dir: Optional[Path] = None) -> dict:
@@ -253,7 +279,16 @@ def descargar_entradas(dav: ClienteWebDAV, llaves: Llaves, entradas: List[Entrad
         prog.poner("descargando", rel.name)
         tmp = tmp_dir / f"desc_{uuid_h}.bin"
         try:
-            if not dav.get_a_archivo(f"d/{uuid_h}/{uuid_h}.bin", tmp, prog):
+            partes = sorted(n for n, d, _t in dav.listar_detalle(f"d/{uuid_h}") if n.endswith(".part") and not d)
+            if partes:
+                causa = _descargar_partes(dav, llaves, uuid_h, partes, destino / rel, tmp_dir, prog)
+                if causa:
+                    res["errores"].append((str(rel), causa))
+                    reg.error("descarga_archivo_fallo", archivo=rel, id=uuid_h, causa=causa)
+                else:
+                    res["archivos"] += 1
+                    reg.info("descarga_archivo_ok", archivo=rel, id=uuid_h, destino=destino / rel)
+            elif not dav.get_a_archivo(f"d/{uuid_h}/{uuid_h}.bin", tmp, prog):
                 causa = getattr(dav, "ultimo_error", "")
                 res["errores"].append((str(rel), "no se pudo descargar" + (f" ({causa})" if causa else "")))
                 reg.error("descarga_archivo_fallo", archivo=rel, id=uuid_h, causa=causa)
@@ -290,6 +325,20 @@ def descargar_todo(dav: ClienteWebDAV, llaves: Llaves, destino: Path,
     res = descargar_entradas(dav, llaves, raiz, destino, prog, tmp_dir=tmp_dir)
     res["errores"] = list(errores) + res["errores"]
     return res
+
+
+def borrar_entrada(dav: ClienteWebDAV, llaves: Llaves, entrada: Entrada) -> Optional[str]:
+    """Borra un archivo o carpeta de la nube (contenido y referencia). Devuelve None o el motivo."""
+    try:
+        cif = mn.cifrar_nombre(entrada.nombre, llaves.siv, entrada.padre)
+    except ErrorBoveda as ex:
+        return str(ex)
+    # Primero el contenido y luego la referencia: si algo falla, el elemento sigue visible y se puede reintentar.
+    if not dav.borrar(f"d/{entrada.uuid}"):
+        return "no se pudo borrar el contenido en la nube"
+    if not dav.borrar(f"d/{entrada.padre}/{cif}"):
+        return "el contenido se borró, pero no la referencia en la nube"
+    return None
 
 
 # ===========================================================================

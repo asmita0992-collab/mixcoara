@@ -172,23 +172,33 @@ private val VioletScheme =
 
 private val MonochromeScheme =
     darkColorScheme(
-        primary = Color(0xFFE2E8F0),
-        onPrimary = Color(0xFF0A0E17),
-        primaryContainer = Color(0xFF38465B),
-        onPrimaryContainer = Color(0xFFFFFFFF),
-        secondary = Color(0xFFCBD5E1),
-        onSecondary = Color(0xFF0F172A),
-        secondaryContainer = Color(0xFF2D3949),
-        onSecondaryContainer = Color(0xFFFFFFFF),
-        tertiary = Color(0xFF94A3B8),
-        onTertiary = Color(0xFF0A0E17),
-        background = Color(0xFF0A0E17),
-        onBackground = Color(0xFFE2E8F0),
-        surface = Color(0xFF1A2432),
-        onSurface = Color(0xFFFFFFFF),
-        surfaceVariant = Color(0xFF263346),
-        onSurfaceVariant = Color(0xFFB4C0D0),
-        outline = Color(0xFF526173),
+        // Un gris plata brillante para los acentos principales (antes era azulado)
+        primary = Color(0xFFD4D4D8),
+        onPrimary = Color(0xFF18181B),     // Negro casi puro para contraste
+
+        // Contenedores en grises medios oscuros
+        primaryContainer = Color(0xFF3F3F46),
+        onPrimaryContainer = Color(0xFFFAFAFA),
+
+        secondary = Color(0xFFA1A1AA),      // Gris claro
+        onSecondary = Color(0xFF18181B),
+        secondaryContainer = Color(0xFF27272A),
+        onSecondaryContainer = Color(0xFFFAFAFA),
+
+        tertiary = Color(0xFF71717A),       // Gris medio
+        onTertiary = Color(0xFF18181B),
+
+        // Fondos con grises puros (Zinc/Neutral de Tailwind)
+        background = Color(0xFF18181B),     // Fondo gris muy oscuro (casi negro)
+        onBackground = Color(0xFFE4E4E7),
+
+        surface = Color(0xFF27272A),        // Superficie de las tarjetas (gris)
+        onSurface = Color(0xFFFAFAFA),
+
+        surfaceVariant = Color(0xFF3F3F46),
+        onSurfaceVariant = Color(0xFFD4D4D8),
+
+        outline = Color(0xFF52525B),
         error = Color(0xFFFFB4AB),
     )
 

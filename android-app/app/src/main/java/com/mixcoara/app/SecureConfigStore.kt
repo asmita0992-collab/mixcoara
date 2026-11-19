@@ -105,6 +105,15 @@ class SecureConfigStore(context: Context) {
         return keyGenerator.generateKey()
     }
 
+    // --- Exención de optimización de batería (nuevo en 2.7.0) -------------------
+
+    fun batteryOptOutDialogShown(): Boolean =
+        preferences.getBoolean("battery_optout_shown", false)
+
+    fun markBatteryOptOutDialogShown() {
+        preferences.edit().putBoolean("battery_optout_shown", true).apply()
+    }
+
     private companion object {
         const val KEY_ALIAS = "mixcoara_config_v2"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

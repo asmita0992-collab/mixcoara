@@ -74,4 +74,7 @@ data class MixcoaraUiState(
     val biometricEnabled: Boolean = false,
     val vaultContentVisible: Boolean = false,
     val themeId: MixcoaraThemeId = MixcoaraThemeId.MIXCO,
+    // --- Nuevos en 2.7.0 ---
+    val batteryOptOut: Boolean = false,
+    val showBatteryOptOutDialog: Boolean = false,
 )

@@ -5,7 +5,7 @@ mixcoara_info.py - Versión, descripción de la app y registro de cambios.
 Para publicar una versión nueva: sube VERSION y agrega un bloque ARRIBA de CAMBIOS.
 """
 
-VERSION = "1.7.0"
+VERSION = "2.7.0"
 
 DESCRIPCION = [
     ("¿Qué es Mixcoara?",
@@ -93,6 +93,50 @@ DESCRIPCION = [
 
 # El más reciente primero. Formato: (versión, fecha, [cambios])
 CAMBIOS = [
+    ("2.7.0", "2026-11-19", [
+        "Nuevo reporte de bóveda exportable a .txt desde Configuración → Bóveda en la nube: "
+        "incluye el árbol de carpetas y una tabla UUID → ruta lógica de todo lo que hay en la nube, "
+        "para recordar dónde estaba cada archivo aunque sus nombres estén cifrados. "
+        "Se guarda en Descargas/Mixcoara/reportes/.",
+        "Reporte incremental durante las subidas: cada archivo subido (suelto o dentro de una carpeta) "
+        "queda anotado automáticamente en Descargas/Mixcoara/reportes/boveda_ultimo.txt.",
+        "Navegación con el botón atrás de Android dentro de la bóveda WebDAV: "
+        "atrás sube un nivel de carpeta y, en la raíz, vuelve a Inicio (cierra la sesión de la bóveda).",
+        "Navegación con el botón atrás de Android dentro de la bóveda local: "
+        "atrás sube un nivel de carpeta, en la raíz vuelve a Inicio y, "
+        "en la vista de compatibilidad .mixcoara, vuelve a la lista de bóvedas locales.",
+        "El botón atrás no interrumpe transferencias u operaciones en curso.",
+        "Tema «Mixco grafito» rediseñado con una paleta de grises neutros (estilo Zinc/Neutral) "
+        "más coherente con el resto de temas oficiales.",
+        "Se restaura la solicitud de exención de optimización de batería: la app vuelve a pedir "
+        "el permiso con un diálogo del sistema la primera vez que se abre una bóveda WebDAV, "
+        "para que las transferencias largas no se interrumpan en segundo plano. Incluye un aviso "
+        "en Configuración con el estado actual y un botón para abrir los ajustes si el usuario "
+        "lo rechazó antes.",
+    ]),
+    ("2.6.0", "2026-11-17", [
+        "Diseño visual de la 2.4.0 restaurado: íconos y tipografía uniformes en la navegación inferior.",
+        "Configuración unificada en una sola pantalla, con los temas en una pestaña aparte.",
+        "Acerca de rediseñado: logotipo centrado, nombre debajo y registro de cambios en tarjetas.",
+        "Biometría completa: se puede activar sin volver a escribir la contraseña, en la nube y en bóvedas locales.",
+        "Acceso a la app sin iniciar sesión obligatoria en la bóveda en línea.",
+        "Exención de optimización de batería eliminada; la app ya no solicita ese permiso.",
+        "Se conservan Pantalla en Pantalla (PiP), notificaciones, subida más rápida y bloqueo de "
+        "suspensión en Wi-Fi para transferencias en segundo plano.",
+        "Los 8 temas visuales se mantienen, con ajustes de contraste.",
+    ]),
+    ("2.5.0", "2026-11-17", [
+        "Incorporación de los 8 temas visuales oficiales (Mixcoara, Mixco noche, Mixco día, "
+        "Mixco oscuridad, Mixco esmeralda, Mixco ámbar, Mixco violeta y Mixco grafito).",
+        "Soporte completo para Pantalla en Pantalla (PiP) automática y manual durante subidas y descargas.",
+        "Corrección de permisos de notificaciones (Android 13+) y bloqueo de suspensión "
+        "(WakeLock/WifiLock) para transferencias continuas en segundo plano.",
+        "Separación del cronómetro de preparación/cifrado y del cronómetro exclusivo de subida a la nube, "
+        "con reporte detallado en la bitácora.",
+        "Desbloqueo mediante biometría (huella o rostro) o credencial del dispositivo "
+        "(PIN, patrón, NIP o contraseña).",
+        "Lectura dinámica del historial de versiones desde el archivo de texto editable registro_cambios.txt.",
+    ]),
     ("1.7.0", "2026-11-05", [
         "La configuración pasó a la carpeta privada ~/config_mixcoara/privado/ y se cifra con una "
         "clave guardada en el Keystore de Android. La copia vieja de Descargas se migra y se borra.",

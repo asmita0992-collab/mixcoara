@@ -59,6 +59,9 @@ class PythonBridge(context: Context) {
     ): BridgeResult =
         invoke("descargar_seleccion", sessionId, entriesJson, outputDir, opId)
 
+    fun deleteSelection(sessionId: String, entriesJson: String): BridgeResult =
+        invoke("borrar_seleccion", sessionId, entriesJson)
+
     fun downloadAll(sessionId: String, outputDir: String, opId: String): BridgeResult =
         invoke("descargar_todo", sessionId, outputDir, opId)
 
@@ -102,6 +105,9 @@ class PythonBridge(context: Context) {
 
     fun exportLogs(): BridgeResult =
         invoke("exportar_registro")
+
+    fun exportReportVault(sessionId: String): BridgeResult =
+        invoke("exportar_reporte_boveda", sessionId)
 
     fun close(sessionId: String) {
         invoke("cerrar_sesion", sessionId)

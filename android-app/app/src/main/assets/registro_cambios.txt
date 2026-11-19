@@ -3,10 +3,31 @@
 # Formato de cabecera: [Versión | Fecha]
 # Formato de cada cambio: - Descripción del cambio
 
+[2.7.0 | 2026-11-19]
+- Nuevo reporte de bóveda exportable a .txt desde Configuración → Bóveda en la nube: incluye el árbol de carpetas y una tabla UUID → ruta lógica de todo lo que hay en la nube, para recordar dónde estaba cada archivo aunque sus nombres estén cifrados. Se guarda en Descargas/Mixcoara/reportes/.
+- Reporte incremental durante las subidas: cada archivo subido (suelto o dentro de una carpeta) queda anotado automáticamente en Descargas/Mixcoara/reportes/boveda_ultimo.txt.
+- Navegación con el botón atrás de Android dentro de la bóveda WebDAV: atrás sube un nivel de carpeta y, en la raíz, vuelve a Inicio (cierra la sesión de la bóveda).
+- Navegación con el botón atrás de Android dentro de la bóveda local: atrás sube un nivel de carpeta, en la raíz vuelve a Inicio y, en la vista de compatibilidad .mixcoara, vuelve a la lista de bóvedas locales.
+- El botón atrás no interrumpe transferencias u operaciones en curso.
+- Tema «Mixco grafito» rediseñado con una paleta de grises neutros (estilo Zinc/Neutral) más coherente con el resto de temas oficiales.
+- Se restaura la solicitud de exención de optimización de batería: la app vuelve a pedir el permiso con un diálogo del sistema la primera vez que se abre una bóveda WebDAV, para que las transferencias largas no se interrumpan en segundo plano. Incluye un aviso en Configuración con el estado actual y un botón para abrir los ajustes si el usuario lo rechazó antes.
+- Archivos subidos en partes ya se muestran como archivos y no como carpetas: el listado reconoce las partes .part y suma su tamaño, y la descarga baja, descifra y une las partes en el archivo final.
+- Borrado de archivos y carpetas en la nube desde la selección, con diálogo de confirmación. Primero se borra el contenido y después la referencia; si algo falla, el elemento sigue visible y puede reintentarse.
+
+[2.6.0 | 2026-11-17]
+- Diseño visual de la 2.4.0 restaurado: íconos y tipografía uniformes en la navegación inferior.
+- Configuración unificada en una sola pantalla, con los temas en una pestaña aparte.
+- Acerca de rediseñado: logotipo centrado, nombre debajo y registro de cambios en tarjetas.
+- Biometría completa: se puede activar sin volver a escribir la contraseña, en la nube y en bóvedas locales.
+- Acceso a la app sin iniciar sesión obligatoria en la bóveda en línea.
+- Exención de optimización de batería eliminada; la app ya no solicita ese permiso.
+- Se conservan Pantalla en Pantalla (PiP), notificaciones, subida más rápida y bloqueo de suspensión en Wi-Fi para transferencias en segundo plano.
+- Los 8 temas visuales se mantienen, con ajustes de contraste.
+
 [2.5.0 | 2026-11-17]
 - Incorporación de los 8 temas visuales oficiales (Mixcoara, Mixco noche, Mixco día, Mixco oscuridad, Mixco esmeralda, Mixco ámbar, Mixco violeta y Mixco grafito).
 - Soporte completo para Pantalla en Pantalla (PiP) automática y manual durante subidas y descargas.
-- Corrección de permisos de notificaciones (Android 13+), exención de batería y bloqueo de suspensión (WakeLock/WifiLock) para transferencias continuas en segundo plano.
+- Corrección de permisos de notificaciones (Android 13+) y bloqueo de suspensión (WakeLock/WifiLock) para transferencias continuas en segundo plano.
 - Separación del cronómetro de preparación/cifrado y del cronómetro exclusivo de subida a la nube, con reporte detallado en la bitácora.
 - Desbloqueo mediante biometría (huella o rostro) o credencial del dispositivo (PIN, patrón, NIP o contraseña).
 - Lectura dinámica del historial de versiones desde el archivo de texto editable registro_cambios.txt.
@@ -19,6 +40,9 @@
 - Biometría opcional ofrecida al desbloquear por primera vez, con cambios posteriores desde Configuración.
 - Metadatos locales cifrados en .mixcoara/metadata.enc; migración de bóvedas existentes tras abrirlas con su contraseña.
 - Registro de versiones revisado; correcciones de textos de seguridad y compatibilidad.
+
+[2.3.0 |]
+- Se identificó una compilación APK previa 2.3.0 (versionCode 24), pero el proyecto no conserva un detalle verificable de sus cambios; se registra sin atribuir funciones no documentadas.
 
 [2.2.1 | 2026-11-08]
 - Bóvedas locales independientes con creación, apertura, contraseña y recuperación propias; acceso desde Inicio sin WebDAV.
@@ -44,29 +68,24 @@
 - Continuidad de la bóveda WebDAV, cifrado local, seguridad y bitácora.
 
 [1.7.0 | 2026-11-05]
-- La configuración pasó a la carpeta privada ~/config_mixcoara/privado/ y se cifra con una clave guardada en el Keystore de Android. La copia vieja de Descargas se migra y se borra.
-- El paquete de certificados TLS se verifica antes de cada transferencia y de cada petición; si no se puede preparar, la app lo informa en lugar de fallar en silencio.
-- El cifrado y el descifrado ya no cuentan como inactividad; el aviso «sin avance» sale a los 45 s.
-- Los temporales se eliminan también cuando una tarea falla o se cancela, y al abrir la app. Nuevo botón para limpiarlos desde Ajustes.
-- Nuevo registro de actividad con errores detallados (excepción, traceback, HTTP, rutas, tamaños, espacio libre), con visor, exportación y borrado.
-- Nuevas pantallas «Acerca de Mixcoara» y «Registro de cambios».
-- Los mensajes de error de subida y descarga ahora incluyen la causa (código HTTP o excepción).
-- Corregido: una cancelación durante el cifrado de una carpeta podía perderse y la subida seguía.
+- Migración y blindaje de la configuración cifrada en KeyStore de Android.
+- Limpieza automática de temporales tras cancelación, fallo o inicio de app.
+- Registro de actividad rotativo con detalle de excepciones y redacción de contraseñas.
+- Pantallas integradas de Acerca de y Registro de cambios.
+- Validación TLS protegida.
 
-[1.4.0 a 1.6.0 | 2026-10 / 2026-11]
-- Se usa requests en lugar de urllib para hablar con WebDAV.
-- El mensaje de ayuda de la pantalla de conexión se ve completo.
-- Temporales y caché en Descargas/Mixcoara; paquete de certificados en una ruta estable.
-- La validación posterior a la subida es opcional.
-- La app no elimina nada del dispositivo.
-- La medición y el porcentaje se calculan por separado en subidas y en descargas.
-- Nueva herramienta de cifrado local (bóveda local) y menú de Ajustes reorganizado.
-- Compilación con el parche de desugaring para las notificaciones.
+[1.6.0 | 2026-10 / 2026-11]
+- Parte de la etapa 1.4–1.6: robustez de WebDAV, cifrado local y telemetría. No se conserva el desglose exacto por versión.
+
+[1.5.0 | 2026-10 / 2026-11]
+- Etapa de mejoras de WebDAV, cifrado local y progreso; desglose específico no documentado.
+
+[1.4.0 | 2026-10 / 2026-11]
+- Etapa de mejoras de WebDAV, cifrado local y progreso; desglose específico no documentado.
 
 [1.3.0 | 2026-10-29]
-- Acceso biométrico con la frase guardada en el Keystore de Android.
-- Permisos de segundo plano: ignorar optimización de batería, notificaciones y superposición.
-- Servicio en primer plano durante transferencias y aviso de resultado si la app está en segundo plano.
+- Acceso biométrico con BiometricPrompt y KeyStore.
+- Servicio en primer plano durante transferencias pesadas.
 
-[1.2.0 | anterior a 2026-10]
-- Versión base: bóveda cifrada sobre WebDAV, explorador, descarga selectiva, cambio de frase y clave de recuperación.
+[1.2.0 | Base]
+- Esquema criptográfico base AES-256-GCM y AES-256-SIV sobre WebDAV.

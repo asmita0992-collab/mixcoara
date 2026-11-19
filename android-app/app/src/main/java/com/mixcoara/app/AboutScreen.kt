@@ -1,5 +1,7 @@
 package com.mixcoara.app
 
+import android.content.Context
+import android.os.Environment
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -14,12 +16,16 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tlahuis.mixcoara.BuildConfig
 import com.tlahuis.mixcoara.R
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class InfoSection(val title: String, val content: String)
 data class ChangelogEntry(val version: String, val date: String, val changes: List<String>)
@@ -40,73 +46,67 @@ val MixcoaraInfoSections = listOf(
     InfoSection("Límites conocidos", "La bóveda local no es un disco virtual ni sincroniza automáticamente con carpetas externas: debes importar y exportar bajo demanda. El acceso nativo a proveedores en nube o USB desde el selector local no está implementado; usa almacenamiento interno o una ruta local directamente accesible. La nueva implementación requiere pruebas en tu dispositivo y no es compatible con bóvedas Cryptomator.")
 )
 
-val MixcoaraChangelog = listOf(
-    ChangelogEntry("2.6.0", "2026-11-17", listOf(
-        "Configuración en dos pestañas: Configuración y Temas.",
-        "Ocho temas visuales oficiales (Mixcoara, Mixco noche, Mixco día, Mixco oscuridad, Mixco esmeralda, Mixco ámbar, Mixco violeta y Mixco grafito), con vista previa y selección inmediata.",
-        "Pantalla en Pantalla (PiP) automática durante subidas y descargas, con el progreso visible en la ventana pequeña.",
-        "Bloqueo de suspensión (WakeLock y WifiLock) para que las transferencias sigan en segundo plano.",
-        "Subida más rápida: envío en paralelo de hasta 3 archivos y partes de 25 MB para archivos grandes.",
-        "Cronómetros separados de preparación (cifrado) y de subida a la nube.",
-        "La app ya no solicita la exención de optimización de batería.",
-    )),
-    ChangelogEntry("2.4.0", "2026-11-12", listOf(
-        "Ícono oficial sin recreaciones vectoriales y logotipo oficial en Acerca de; navegación inferior uniforme.",
-        "Inicio disponible sin exigir permisos previos; elección directa entre WebDAV y bóvedas locales.",
-        "Importación local de archivo o carpeta mediante diálogos, con selectores y ruta manual; pantalla local despejada.",
-        "Visibilidad de archivos locales oculta por defecto y control para mostrar u ocultar.",
-        "Biometría opcional ofrecida al desbloquear por primera vez, con cambios posteriores desde Configuración.",
-        "Metadatos locales cifrados en .mixcoara/metadata.enc; migración de bóvedas existentes tras abrirlas con su contraseña.",
-        "Registro de versiones revisado; correcciones de textos de seguridad y compatibilidad."
-    )),
-    ChangelogEntry("2.3.0", "", listOf(
-        "Se identificó una compilación APK previa 2.3.0 (versionCode 24), pero el proyecto no conserva un detalle verificable de sus cambios; se registra sin atribuir funciones no documentadas."
-    )),
-    ChangelogEntry("2.2.1", "2026-11-08", listOf(
-        "Bóvedas locales independientes con creación, apertura, contraseña y recuperación propias; acceso desde Inicio sin WebDAV.",
-        "Importación cifrada de directorios, explorador local y exportación de copias descifradas; conservación de archivos originales.",
-        "Protección biométrica por bóveda con llaves de Android Keystore que requieren autenticación.",
-        "Activación de huella con la contraseña ya verificada, sin inventar ni escribir una frase distinta.",
-        "Compatibilidad conservada para archivos .mixcoara de la herramienta anterior."
-    )),
-    ChangelogEntry("2.2.0", "2026-11-08", listOf(
-        "Restauración del acceso a Acerca de y Registro de cambios desde la navegación principal.",
-        "Restauración de mostrar/ocultar contenido; nombres y selección no se componen mientras la vista está oculta.",
-        "Vista de bóveda oculta por defecto y al bloquear o cambiar de conexión.",
-        "Ícono de Mixcoara en tarjetas y cabecera; eliminación de imágenes decorativas genéricas y de la marca duplicada en tarjetas.",
-        "Versión informativa tomada de BuildConfig."
-    )),
-    ChangelogEntry("2.1.0", "", listOf(
-        "Selección nativa de carpetas con OpenDocumentTree y conservación de la ruta manual.",
-        "Preparación de selecciones nativas en segundo plano y temporales por operación.",
-        "Ajustes de progreso por etapas, cancelación, limpieza y tratamiento de errores nulos."
-    )),
-    ChangelogEntry("2.0.0", "", listOf(
-        "Migración de la interfaz a Android nativo con Jetpack Compose y puente al núcleo Python mediante Chaquopy.",
-        "Continuidad de la bóveda WebDAV, cifrado local, seguridad y bitácora."
-    )),
-    ChangelogEntry("1.7.0", "2026-11-05", listOf(
-        "Migración y blindaje de la configuración cifrada en KeyStore de Android.",
-        "Limpieza automática de temporales tras cancelación, fallo o inicio de app.",
-        "Registro de actividad rotativo con detalle de excepciones y redacción de contraseñas.",
-        "Pantallas integradas de Acerca de y Registro de cambios.",
-        "Validación TLS protegida."
-    )),
-    ChangelogEntry("1.6.0", "2026-10 / 2026-11", listOf("Parte de la etapa 1.4–1.6: robustez de WebDAV, cifrado local y telemetría. No se conserva el desglose exacto por versión.")),
-    ChangelogEntry("1.5.0", "2026-10 / 2026-11", listOf("Etapa de mejoras de WebDAV, cifrado local y progreso; desglose específico no documentado.")),
-    ChangelogEntry("1.4.0", "2026-10 / 2026-11", listOf("Etapa de mejoras de WebDAV, cifrado local y progreso; desglose específico no documentado.")),
-    ChangelogEntry("1.3.0", "2026-10-29", listOf(
-        "Acceso biométrico con BiometricPrompt y KeyStore.",
-        "Servicio en primer plano durante transferencias pesadas."
-    )),
-    ChangelogEntry("1.2.0", "Base", listOf(
-        "Esquema criptográfico base AES-256-GCM y AES-256-SIV sobre WebDAV."
-    ))
-)
+private const val NOMBRE_REGISTRO = "registro_cambios.txt"
+
+private val CABECERA_REGISTRO = Regex("""^\[\s*([^|\]]+?)\s*\|\s*([^\]]*?)\s*\]$""")
+
+/**
+ * Lee el registro de cambios. Primero intenta Descargas/Mixcoara/registro_cambios.txt
+ * (editable por el usuario); si no existe o no se puede leer, usa assets/registro_cambios.txt.
+ */
+fun leerRegistroCambios(context: Context): List<ChangelogEntry> {
+    val desdeDescargas = runCatching {
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Mixcoara/$NOMBRE_REGISTRO")
+            .takeIf { it.isFile && it.canRead() }
+            ?.readText(Charsets.UTF_8)
+    }.getOrNull()
+    val texto = desdeDescargas ?: runCatching {
+        context.assets.open(NOMBRE_REGISTRO).bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }.getOrDefault("")
+    return parsearRegistroCambios(texto)
+}
+
+/**
+ * Convierte el texto del registro en entradas. Cabecera: [Versión | Fecha] (la fecha puede ir vacía).
+ * Cada cambio empieza con "- ". Las demás líneas (comentarios, vacías) se ignoran.
+ */
+fun parsearRegistroCambios(texto: String): List<ChangelogEntry> {
+    val entradas = mutableListOf<ChangelogEntry>()
+    var versionActual: String? = null
+    var fechaActual = ""
+    var cambiosActuales = mutableListOf<String>()
+
+    fun cerrarEntrada() {
+        versionActual?.let { entradas.add(ChangelogEntry(it, fechaActual, cambiosActuales.toList())) }
+    }
+
+    for (linea in texto.lines()) {
+        val limpia = linea.trim()
+        val cabecera = CABECERA_REGISTRO.find(limpia)
+        when {
+            cabecera != null -> {
+                cerrarEntrada()
+                versionActual = cabecera.groupValues[1]
+                fechaActual = cabecera.groupValues[2]
+                cambiosActuales = mutableListOf()
+            }
+            limpia.startsWith("- ") && versionActual != null -> cambiosActuales.add(limpia.removePrefix("- ").trim())
+        }
+    }
+    cerrarEntrada()
+    return entradas
+}
 
 @Composable
 fun AboutAndChangelogScreen() {
     var tab by rememberSaveable { mutableStateOf(0) }
+    val context = LocalContext.current
+    var entradasCambios by remember { mutableStateOf<List<ChangelogEntry>>(emptyList()) }
+    var registroCargado by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        entradasCambios = withContext(Dispatchers.IO) { leerRegistroCambios(context) }
+        registroCargado = true
+    }
     Column(Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.secondary) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Acerca de") })
@@ -147,7 +147,12 @@ fun AboutAndChangelogScreen() {
                     }
                 }
             } else {
-                items(MixcoaraChangelog, key = { "history_${it.version}" }) { entry ->
+                if (registroCargado && entradasCambios.isEmpty()) {
+                    item(key = "sin_registro") {
+                        Text("No se pudo leer el registro de cambios.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                items(entradasCambios, key = { "history_${it.version}" }) { entry ->
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {

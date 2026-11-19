@@ -1,6 +1,10 @@
 package com.mixcoara.app
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.os.PowerManager
+import android.provider.Settings
 import com.mixcoara.app.ui.theme.MixcoaraThemeId
 import android.Manifest
 import android.content.pm.PackageManager
@@ -420,6 +424,12 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
                      else "${entries.size} elementos protegidos",
              )
          }
+         // Exención de batería: actualizar el estado real y, si toca,
+         // pedir el diálogo la primera vez que se abre la bóveda WebDAV.
+         refreshBatteryOptOutState()
+         if (shouldOfferBatteryOptOut()) {
+             _state.update { it.copy(showBatteryOptOutDialog = true) }
+         }
      }
 
     // -------------------------------------------------------------------------
@@ -709,6 +719,40 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
+    fun deleteSelected() {
+        val sessionId = _state.value.sessionId ?: return
+        val selected = _state.value.entries.filter { _state.value.selectedEntryIds.contains(it.id) }
+        if (selected.isEmpty()) {
+            _state.update { it.copy(error = "No has seleccionado ningún elemento.") }
+            return
+        }
+        val array = JSONArray()
+        for (entry in selected) {
+            array.put(
+                JSONObject()
+                    .put("name", entry.name)
+                    .put("is_directory", entry.isDirectory)
+                    .put("id", entry.id)
+                    .put("size", entry.size)
+                    .put("parent_id", entry.parentId),
+            )
+        }
+        val jsonStr = array.toString()
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, message = "Borrando selección…") }
+            val result = withContext(Dispatchers.IO) { bridge.deleteSelection(sessionId, jsonStr) }
+            val errores = parseErrors(result.data?.optJSONArray("errors"))
+            val error =
+                when {
+                    !result.ok -> result.message.ifBlank { "No se pudo borrar la selección." }
+                    errores.isNotEmpty() -> errores.joinToString("\n")
+                    else -> null
+                }
+            _state.update { it.copy(selectedEntryIds = emptySet(), error = error) }
+            loadDirectory(sessionId, currentDirectoryId())
+        }
+    }
+
     fun downloadSelected(outputDir: String = "") {
         val sessionId = _state.value.sessionId ?: return
         val selected = _state.value.entries.filter { _state.value.selectedEntryIds.contains(it.id) }
@@ -906,6 +950,84 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
     }
 
     // -------------------------------------------------------------------------
+    // Exención de optimización de batería (nuevo en 2.7.0)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Devuelve true si la app está exenta de la optimización de batería.
+     * En Android 6+ (API 23), `PowerManager.isIgnoringBatteryOptimizations`
+     * es la única forma fiable de comprobarlo.
+     */
+    fun isBatteryOptOut(): Boolean {
+        val ctx = getApplication<Application>()
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(ctx.packageName)
+    }
+
+    /**
+     * Se llama desde la UI cuando la bóveda WebDAV acaba de abrirse.
+     * Solo muestra el diálogo si:
+     *   - la app NO está exenta,
+     *   - el usuario no dijo antes "no volver a preguntar".
+     *
+     * Devuelve true si la UI debe mostrar el diálogo.
+     */
+    fun shouldOfferBatteryOptOut(): Boolean {
+        if (isBatteryOptOut()) return false
+        if (store.batteryOptOutDialogShown()) return false
+        return true
+    }
+
+    /**
+     * El usuario aceptó: abre el diálogo del sistema. Si acepta en el sistema,
+     * Android nos devuelve a la app y, en el siguiente `onResume`, comprobamos
+     * el estado real con `isBatteryOptOut()`.
+     */
+    fun requestBatteryOptOut() {
+        store.markBatteryOptOutDialogShown() // no volver a preguntar automáticamente
+        _state.update { it.copy(showBatteryOptOutDialog = false) }
+        val ctx = getApplication<Application>()
+        runCatching {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${ctx.packageName}"),
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+        }
+    }
+
+    /**
+     * El usuario dijo "Ahora no, no volver a preguntar". Marcamos para que no
+     * vuelva a salir automáticamente; el botón de Configuración sigue ahí.
+     */
+    fun dismissBatteryOptOutDialog() {
+        store.markBatteryOptOutDialogShown()
+        _state.update { it.copy(showBatteryOptOutDialog = false) }
+    }
+
+    /**
+     * Se llama en cada `onResume` de la Activity para reflejar el estado real
+     * (por si el usuario cambió la exención desde los Ajustes del sistema).
+     */
+    fun refreshBatteryOptOutState() {
+        _state.update { it.copy(batteryOptOut = isBatteryOptOut()) }
+    }
+
+    /**
+     * Abre la pantalla de Ajustes de batería (la genérica, para los que ya
+     * dijeron "no" y quieren volver a intentarlo desde Configuración).
+     */
+    fun openBatterySettings() {
+        val ctx = getApplication<Application>()
+        runCatching {
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Registro de actividad
     // -------------------------------------------------------------------------
     fun loadLogs() {
@@ -931,6 +1053,26 @@ class MixcoaraViewModel(application: Application) : AndroidViewModel(application
             if (res.ok) {
                 val path = res.data?.optString("export_path").orEmpty()
                 onDone(path)
+            }
+        }
+    }
+
+    fun exportReportVault(onDone: (path: String) -> Unit) {
+        val sessionId = _state.value.sessionId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, message = "Generando reporte de bóveda…") }
+            val res = withContext(Dispatchers.IO) { bridge.exportReportVault(sessionId) }
+            if (res.ok) {
+                val path = res.data?.optString("export_path").orEmpty()
+                _state.update { it.copy(busy = false, message = "Reporte guardado en Descargas/Mixcoara/reportes.") }
+                onDone(path)
+            } else {
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        error = res.message.ifBlank { "No se pudo generar el reporte de bóveda." },
+                    )
+                }
             }
         }
     }

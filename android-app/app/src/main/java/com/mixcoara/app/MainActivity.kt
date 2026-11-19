@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -43,6 +44,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.BatteryAlert
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
@@ -97,6 +99,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -123,7 +126,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.mixcoara.app.ui.theme.MixcoaraTheme
 import androidx.activity.compose.setContent
 import com.tlahuis.mixcoara.BuildConfig
@@ -163,6 +169,43 @@ private fun MixcoaraEntry(activity: FragmentActivity) {
     var section by rememberSaveable(BuildConfig.VERSION_CODE) { mutableStateOf("home") }
     var currentTabName by rememberSaveable(BuildConfig.VERSION_CODE) { mutableStateOf(AppTab.LOCAL_VAULT.name) }
     val selectedTab = AppTab.valueOf(currentTabName)
+
+    // Movidos aquí arriba para poder usarlos en BackHandler y en el resto de la pantalla.
+    val localModel: LocalDirectoryViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val localState by localModel.state.collectAsStateWithLifecycle()
+    val cloud: MixcoaraViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val cloudState by cloud.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // Botón atrás de Android: solo en "workspace". En "home" sale la app por defecto.
+    BackHandler(enabled = section == "workspace") {
+        val ocupado = localState.busy || cloudState.activeProgress != null
+        if (!ocupado) {
+            when (selectedTab) {
+                AppTab.EXPLORER -> {
+                    if (cloudState.breadcrumbs.size > 1) {
+                        cloud.navigateUp()
+                    } else {
+                        cloud.lock()
+                        section = "home"
+                    }
+                }
+                AppTab.LOCAL_VAULT -> {
+                    if (localState.crumbs.isNotEmpty()) {
+                        localModel.up()
+                    } else {
+                        localModel.lock { section = "home" }
+                    }
+                }
+                AppTab.CONFIGURACION,
+                AppTab.LOGS,
+                AppTab.ABOUT -> {
+                    section = "home"
+                }
+            }
+        }
+    }
+
     if (section == "home") {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Column(
@@ -199,12 +242,6 @@ private fun MixcoaraEntry(activity: FragmentActivity) {
         }
         return
     }
-
-    val localModel: LocalDirectoryViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val localState by localModel.state.collectAsStateWithLifecycle()
-    val cloud: MixcoaraViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val cloudState by cloud.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     fun goHome() {
         if (localState.busy || cloudState.activeProgress != null || (selectedTab == AppTab.EXPLORER && cloudState.busy)) return
@@ -254,7 +291,7 @@ private fun MixcoaraEntry(activity: FragmentActivity) {
                         if (cloudState.sessionId != null) {
                             { LocalVaultScreen(onEncrypt = cloud::encryptLocal, onDecrypt = cloud::decryptLocal) }
                         } else null
-                    LocalDirectoryScreen(activity, legacyContent = compatibility)
+                    LocalDirectoryScreen(activity, onExit = ::goHome, legacyContent = compatibility)
                 }
                 AppTab.CONFIGURACION -> ConfiguracionScreen(activity, cloud, onEditarConexion = {
                     cloud.editConnection()
@@ -415,6 +452,19 @@ private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel
         state.error?.let { snackbar.showSnackbar(it) }
     }
 
+    // Refresca el estado de la exención de batería cuando la app vuelve a primer plano
+    // (el usuario pudo cambiarlo desde los Ajustes del sistema).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshBatteryOptOutState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     var offerBiometrics by remember { mutableStateOf(false) }
     LaunchedEffect(state.screen, state.sessionId, state.busy, state.config) {
         offerBiometrics = state.screen == AppScreen.VAULT && !state.busy && state.sessionId != null &&
@@ -436,6 +486,43 @@ private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel
             dismissButton = {
                 TextButton(onClick = { VaultBiometrics.markOffered(activity, scope); offerBiometrics = false }) {
                     Text("Ahora no")
+                }
+            },
+        )
+    }
+
+    // --- Exención de optimización de batería (2.7.0) -----------------------
+    // Se muestra automáticamente la primera vez que se abre una bóveda WebDAV.
+    // "Ahora no, no volver a preguntar" guarda la decisión y no vuelve a salir;
+    // el botón de Configuración sigue disponible para reintentarlo.
+    if (state.showBatteryOptOutDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissBatteryOptOutDialog() },
+            icon = {
+                Icon(
+                    Icons.Rounded.BatteryAlert,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp),
+                )
+            },
+            title = { Text("Permitir transferencias en segundo plano", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Mixcoara puede seguir subiendo y descargando aunque cambies de app o " +
+                        "apagues la pantalla. Para que Android no interrumpa las transferencias " +
+                        "largas, necesitamos que la app quede exenta de la optimización de batería. " +
+                        "El sistema te mostrará un cuadro de confirmación.",
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.requestBatteryOptOut() }) {
+                    Text("Permitir")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissBatteryOptOutDialog() }) {
+                    Text("Ahora no, no volver a preguntar")
                 }
             },
         )
@@ -577,6 +664,7 @@ private fun MixcoaraApp(activity: FragmentActivity, viewModel: MixcoaraViewModel
                                 onUploadFolder = viewModel::uploadFolder,
                                 onUploadPickedFolder = viewModel::uploadPickedFolder,
                                 onDownloadSelected = { viewModel.downloadSelected() },
+                                onDeleteSelected = { viewModel.deleteSelected() },
                                 onDownloadAll = { viewModel.downloadAll() },
                             )
             }
@@ -658,13 +746,21 @@ private fun VaultExplorerScreen(
     onUploadFolder: (path: String, verify: Boolean) -> Unit,
     onUploadPickedFolder: (uri: Uri, verify: Boolean) -> Unit,
     onDownloadSelected: () -> Unit,
+    onDeleteSelected: () -> Unit,
     onDownloadAll: () -> Unit,
 ) {
+    // Botón atrás dentro del explorador WebDAV. Si hay transferencia en curso no hace nada.
+    // Solo actúa si hay subcarpetas; en la raíz deja pasar el atrás a MixcoaraEntry.
+    BackHandler(enabled = !state.busy && state.breadcrumbs.size > 1) {
+        onBreadcrumbClick(state.breadcrumbs.size - 2)
+    }
+
     val context = LocalContext.current
     var showUploadFileDialog by remember { mutableStateOf(false) }
     var showUploadFolderDialog by remember { mutableStateOf(false) }
     var pendingUploadFileVerify by remember { mutableStateOf(false) }
     var pendingUploadFolderVerify by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     val filePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -817,6 +913,9 @@ private fun VaultExplorerScreen(
                         IconButton(onClick = onSelectAll) {
                             Icon(Icons.Rounded.SelectAll, contentDescription = "Seleccionar todo")
                         }
+                        IconButton(onClick = { showDeleteDialog = true }) {
+                            Icon(Icons.Rounded.Delete, contentDescription = "Borrar selección")
+                        }
                         Button(
                             onClick = onDownloadSelected,
                             colors =
@@ -831,6 +930,27 @@ private fun VaultExplorerScreen(
                         }
                     }
                 }
+            }
+        }
+
+        if (showDeleteDialog) {
+            item {
+                AlertDialog(
+                    onDismissRequest = { showDeleteDialog = false },
+                    title = { Text("Borrar selección") },
+                    text = {
+                        Text("Se borrarán de la nube los elementos marcados, incluido todo lo que contengan las carpetas. No se puede deshacer.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showDeleteDialog = false
+                            onDeleteSelected()
+                        }) { Text("Borrar") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeleteDialog = false }) { Text("Cancelar") }
+                    },
+                )
             }
         }
 

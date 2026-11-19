@@ -1104,6 +1104,12 @@ def subir_carpeta(dav: ClienteWebDAV, llaves: Llaves, carpeta: Path,
                 reg.info("subida_archivo_ok", archivo=ruta, bytes=_tam_seguro(ruta), id=id_arch,
                          segundos_preparacion_cifrado=round(t_prep_arch, 2),
                          segundos_subida_exclusiva=round(t_red_arch, 2))
+                # Reporte incremental (nuevo)
+                try:
+                    import mixcoara_reporte as _rep
+                    _rep.anotar_en_reporte(ruta, id_arch, "file", _tam_seguro(ruta))
+                except Exception:
+                    pass
             else:
                 reg.aviso("subida_archivo_interrumpida", archivo=ruta, id=id_arch,
                           segundos_preparacion_cifrado=round(t_prep_arch, 2),
@@ -1322,6 +1328,12 @@ def subir_archivo(dav: ClienteWebDAV, llaves: Llaves, ruta: Path,
                      verificado=bool(res["verificados"]),
                      segundos_preparacion_cifrado=round(t_prep_arch, 2),
                      segundos_subida_exclusiva=round(t_red_arch, 2))
+            # Reporte incremental (nuevo)
+            try:
+                import mixcoara_reporte as _rep
+                _rep.anotar_en_reporte(ruta, id_arch, "file", tam_archivo)
+            except Exception:
+                pass
         else:
             reg.aviso("subida_archivo_interrumpida", archivo=ruta, id=id_arch,
                       segundos_preparacion_cifrado=round(t_prep_arch, 2),

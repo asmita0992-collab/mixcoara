@@ -1,5 +1,6 @@
 package com.mixcoara.app
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,8 +8,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BatteryAlert
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -19,7 +24,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -47,6 +55,10 @@ fun ConfiguracionBasica(
     val state by model.state.collectAsStateWithLifecycle()
     val localModel: LocalDirectoryViewModel = viewModel()
     val localState by localModel.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        model.refreshBatteryOptOutState()
+    }
 
     ScreenList {
         HeroCard(
@@ -112,6 +124,88 @@ fun ConfiguracionBasica(
                         if (state.sessionId == null) "Abre la bóveda para usar esta opción." else "Usar biometría para desbloquear",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+
+                // --- Reporte de bóveda ---
+                HorizontalDivider()
+                Text("Reporte de bóveda", fontWeight = FontWeight.Bold)
+                Text(
+                    "Genera un .txt con el árbol de carpetas y la tabla UUID → ruta " +
+                        "de todo lo que hay en la nube. Se guarda en " +
+                        "Descargas/Mixcoara/reportes y sirve para recordar dónde estaba " +
+                        "cada archivo aunque sus nombres estén cifrados.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ExportReportButton(
+                    enabled = !state.busy && state.sessionId != null,
+                    onExport = {
+                        model.exportReportVault { path ->
+                            val context = activity.applicationContext
+                            Toast.makeText(
+                                context,
+                                if (path.isBlank()) {
+                                    "Reporte generado en Descargas/Mixcoara/reportes"
+                                } else {
+                                    "Reporte guardado en: $path"
+                                },
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    },
+                )
+                if (state.sessionId == null) {
+                    Text(
+                        "Abre primero la bóveda WebDAV para poder exportar el reporte.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // --- Exención de optimización de batería (2.7.0) ---
+                HorizontalDivider()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (state.batteryOptOut) Icons.Rounded.CheckCircle else Icons.Rounded.BatteryAlert,
+                        contentDescription = null,
+                        tint = if (state.batteryOptOut) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        if (state.batteryOptOut) "Transferencias en segundo plano: permitidas"
+                        else "Transferencias en segundo plano: restringidas",
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Text(
+                    if (state.batteryOptOut) {
+                        "Android no interrumpirá las subidas ni descargas largas cuando cambies " +
+                            "de app o apagues la pantalla."
+                    } else {
+                        "Android puede interrumpir las transferencias largas si cambias de app " +
+                            "o apagas la pantalla. Puedes permitirlo ahora: se abrirá el cuadro " +
+                            "de confirmación del sistema."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!state.batteryOptOut) {
+                    OutlinedButton(
+                        onClick = { model.requestBatteryOptOut() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Rounded.BatteryAlert, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Permitir transferencias en segundo plano")
+                    }
+                    TextButton(
+                        onClick = { model.openBatterySettings() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Abrir ajustes de batería del sistema")
+                    }
                 }
             }
         }
@@ -240,5 +334,30 @@ private fun CambiarFraseBoveda(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ExportReportButton(
+    enabled: Boolean,
+    onExport: () -> Unit,
+) {
+    val context = LocalContext.current
+    OutlinedButton(
+        onClick = {
+            runCatching { onExport() }.onFailure { ex ->
+                Toast.makeText(
+                    context,
+                    "No se pudo exportar el reporte: ${ex.message ?: ex::class.simpleName}",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        },
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Exportar reporte de bóveda (.txt)")
     }
 }

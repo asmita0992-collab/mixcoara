@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -285,6 +286,17 @@ fun LocalDirectoryScreen(
     var contentVisible by rememberSaveable { mutableStateOf(false) }
     var showManualLocation by rememberSaveable { mutableStateOf(false) }
     var showBiometricOffer by remember { mutableStateOf(false) }
+
+    // Botón atrás dentro de la bóveda local: no interrumpe transferencias en curso.
+    // Si hay carpetas navegadas sube un nivel; en la raíz vuelve a Inicio.
+    BackHandler(enabled = state.session.isNotBlank() && !state.busy) {
+        if (state.crumbs.isNotEmpty()) {
+            model.up()
+        } else {
+            onExit?.invoke()
+        }
+    }
+
     LaunchedEffect(state.session, state.path) {
         contentVisible = false
         showBiometricOffer = state.session.isNotBlank() &&
@@ -436,6 +448,8 @@ fun LocalDirectoryScreen(
         } }, confirmButton = { TextButton(onClick = model::cancel) { Text("Cancelar operación de archivos") } })
     }
     if (legacy && legacyContent != null) {
+        // Mientras se muestra la compatibilidad .mixcoara, el atrás devuelve a la lista.
+        BackHandler(enabled = true) { legacy = false }
         Column(Modifier.fillMaxSize()) {
             TextButton(onClick = { legacy = false }) { Text("Volver a bóvedas locales independientes") }
             Box(Modifier.weight(1f)) { legacyContent() }
