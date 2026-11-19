@@ -7,3 +7,5 @@ keystore-base64.txt
 android-app/app/build/
 android-app/build/
 .gradle/
+android-app/app/src/main/python/__pycache__/
+android-app/app/src/main/python/tests/
